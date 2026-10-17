@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plushie Ledger</title>
+<meta name="theme-color" content="#7A4FA0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Plushie Ledger">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: phone-first ledger — sticky header with yarn-stitch tabs, one column of panels, floating "Record sale" button; widens to two columns on desktop */
+:root {
+  --bg: #F5F3F7;
+  --surface: #FFFFFF;
+  --ink: #2A2233;
+  --muted: #6D6477;
+  --line: #E3DDE9;
+  --accent: #7A4FA0;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #EFE6F7;
+  --good: #23806F;
+  --warn: #B4621A;
+  --warn-soft: #FBEBDD;
+  --danger: #B3343F;
+  --font-display: "Fredoka", "Nunito", ui-rounded, system-ui, sans-serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(42,34,51,.06), 0 4px 16px rgba(42,34,51,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17131C; --surface: #221C29; --ink: #EEE8F3; --muted: #A69CB1; --line: #362D40;
+    --accent: #C39AE8; --accent-ink: #1E1525; --accent-soft: #33264141; --good: #5FC7B6;
+    --warn: #F0A464; --warn-soft: #3A2A1E; --danger: #F07A84;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17131C; --surface: #221C29; --ink: #EEE8F3; --muted: #A69CB1; --line: #362D40;
+  --accent: #C39AE8; --accent-ink: #1E1525; --accent-soft: #33264141; --good: #5FC7B6;
+  --warn: #F0A464; --warn-soft: #3A2A1E; --danger: #F07A84;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+[hidden] { display: none !important; }
+.head-right { display: flex; align-items: center; gap: 10px; }
+.signin { max-width: 400px; margin: 8vh auto 0; display: grid; gap: 14px; }
+.signin p { margin: 0; color: var(--muted); }
+.signin .err { color: var(--danger); font-size: .9rem; min-height: 1.2em; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+.num { font-variant-numeric: tabular-nums; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 2px dashed var(--line);
+}
+.wrap { max-width: 980px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 14px 10px; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: 1.45rem; margin: 0; letter-spacing: .01em; display: flex; align-items: center; gap: 8px; }
+h1 svg { flex: none; }
+.sync { font-size: .78rem; color: var(--muted); }
+nav.tabs { display: flex; gap: 4px; padding-block: 0 10px; }
+nav.tabs button {
+  flex: 1; border: 0; background: transparent; padding: 8px 10px; border-radius: 999px;
+  font-weight: 600; color: var(--muted);
+}
+nav.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+
+main { padding-block: 18px 110px; display: grid; gap: 16px; }
+.panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+.panel h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.1rem; margin: 0 0 12px; text-wrap: balance; }
+.label { text-transform: uppercase; letter-spacing: .07em; font-size: .7rem; font-weight: 700; color: var(--muted); }
+.grid-2 { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+
+.banner { background: var(--warn-soft); color: var(--ink); border-radius: var(--radius); padding: 12px 14px; font-size: .9rem; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
+/* Overview stats */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+.stat { min-width: 0; }
+.stat .v { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; line-height: 1.15; margin-top: 2px; overflow-wrap: anywhere; }
+.stat .d { font-size: .78rem; color: var(--muted); }
+.stat .d.up { color: var(--good); }
+.stat .d.down { color: var(--warn); }
+.month-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.month-head h2 { margin: 0; }
+
+.chart svg { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-family: var(--font-body); font-size: 10px; }
+.chart .val { fill: var(--ink); font-weight: 600; }
+
+.rows { display: grid; gap: 0; }
+.row { display: flex; align-items: center; gap: 12px; padding-block: 10px; border-top: 1px solid var(--line); min-width: 0; }
+.row:first-child { border-top: 0; }
+.row .main { flex: 1; min-width: 0; }
+.row .title { font-weight: 600; overflow-wrap: anywhere; }
+.row .sub { font-size: .82rem; color: var(--muted); }
+.row .amt { font-weight: 700; text-align: right; white-space: nowrap; }
+.empty { color: var(--muted); font-size: .9rem; padding-block: 6px; }
+
+.swatch { width: 34px; height: 34px; border-radius: 50%; flex: none; position: relative;
+  background: var(--sw, #b9a3d0); box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
+.swatch::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; border: 1.5px dashed rgba(255,255,255,.7); }
+
+.chip { display: inline-block; font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.chip.low { background: var(--warn-soft); color: var(--warn); }
+.chip.ex { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
+
+/* Products */
+.toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.toolbar .search { flex: 1 1 200px; }
+.cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.pcard { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; display: grid; gap: 12px; min-width: 0; }
+.pcard .top { display: flex; gap: 12px; align-items: flex-start; }
+.pcard .top .main { flex: 1; min-width: 0; }
+.pcard .name { font-family: var(--font-display); font-weight: 600; font-size: 1.08rem; line-height: 1.2; overflow-wrap: anywhere; }
+.pcard .meta { font-size: .82rem; color: var(--muted); }
+.pcard .bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 2px dashed var(--line); }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.1rem; line-height: 1; }
+.stepper .n { min-width: 2.2ch; text-align: center; font-weight: 700; }
+
+/* Controls */
+.btn { border: 0; border-radius: 999px; padding: 10px 16px; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
+.btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+.btn.small { padding: 6px 12px; font-size: .85rem; }
+.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); }
+.btn.danger.armed { background: var(--danger); color: #fff; border-color: var(--danger); }
+.linkbtn { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 4px; }
+input, select, textarea { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+textarea { resize: vertical; min-height: 60px; }
+label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: var(--muted); min-width: 0; }
+.fgrid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.fgrid .full { grid-column: 1 / -1; }
+
+.fab {
+  position: fixed; z-index: 6;
+  right: calc(18px + env(safe-area-inset-right, 0px)); bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 6px 20px rgba(122,79,160,.35); padding: 14px 20px; font-size: 1rem;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+
+/* Sheet */
+.overlay { position: fixed; inset: 0; z-index: 20; background: rgba(20,14,26,.45); display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 640px) { .overlay { align-items: center; } }
+.sheet { background: var(--surface); width: 100%; max-width: 520px; max-height: 92%; overflow: auto;
+  border-radius: 20px 20px 0 0; padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+@media (min-width: 640px) { .sheet { border-radius: 20px; } }
+.sheet h3 { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; margin: 0 0 14px; }
+.sheet .actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+.sheet .actions .right { display: flex; gap: 10px; margin-left: auto; }
+.colors { display: flex; gap: 8px; flex-wrap: wrap; }
+.colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; background: var(--sw); padding: 0; }
+.colors button[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface) inset; }
+.total-line { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; padding-top: 12px; border-top: 2px dashed var(--line); }
+.total-line .v { font-family: var(--font-display); font-size: 1.4rem; font-weight: 600; }
+
+.monthgroup h4 { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; padding-block: 4px 6px; }
+.monthgroup + .monthgroup { margin-top: 14px; }
+.salerow { cursor: pointer; }
+.salerow:hover .title { color: var(--accent); }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 30;
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: .9rem; max-width: calc(100% - 32px); }
+@media (prefers-reduced-motion: no-preference) {
+  .sheet { animation: up .22s ease-out; }
+  @keyframes up { from { transform: translateY(24px); opacity: .6; } }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="head-row">
+      <h1>
+        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11" fill="var(--accent)"/><path d="M5 10c4 2 12 2 16 0M4 14c5 2.5 13 2.5 18 0M6 18.5c4 1.6 10 1.6 14 0M10 3c-2 5-2 15 1 20M16 3c2 5 2 15-1 20" stroke="var(--surface)" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+        Plushie Ledger
+      </h1>
+      <div class="head-right">
+        <span class="sync" id="sync">Loading…</span>
+        <button class="linkbtn" id="signout" type="button" hidden>Sign out</button>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist" id="tabs" hidden>
+      <button role="tab" id="tab-overview" aria-selected="true" data-tab="overview">Overview</button>
+      <button role="tab" id="tab-products" aria-selected="false" data-tab="products">Products</button>
+      <button role="tab" id="tab-sales" aria-selected="false" data-tab="sales">Sales</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <form class="signin panel" id="signin" hidden novalidate>
+    <h2 style="margin:0">Sign in</h2>
+    <p>Use the email and password set up for this shop.</p>
+    <label class="f">Email<input id="si-email" type="email" autocomplete="username" required></label>
+    <label class="f">Password<input id="si-pass" type="password" autocomplete="current-password" required></label>
+    <div class="err" id="si-err"></div>
+    <button class="btn" type="submit" id="si-go">Sign in</button>
+  </form>
+  <main id="view"></main>
+</div>
+
+<button class="btn fab" id="fab" type="button" hidden>
+  <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+  Record sale
+</button>
+<div id="sheet-root"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module">
+import { firebaseConfig } from "./firebase-config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+{
+  const YARN = ["#E58FA6", "#F2B36B", "#E9D66B", "#8FC79A", "#6FB6C9", "#8A9BE0", "#B48BD6", "#C9A27E", "#9B9B9B", "#F4EFE6", "#4B4453"];
+  const CHANNELS = ["Craft fair", "Etsy", "Instagram", "Custom order", "Friends & family", "Other"];
+  const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+  const money0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const fmt = (n) => money.format(n || 0);
+  const fmtShort = (n) => (Math.abs(n) >= 1000 ? money0.format(n) : money.format(n || 0));
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  const state = { tab: "overview", products: [], sales: [], loaded: { p: false, s: false }, filterProduct: "", search: "", readOnly: false, offline: false };
+
+  // Local-only fallback when saving isn't available in this view
+  const local = { products: [], sales: [] };
+
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function monthKey(dateStr) { return (dateStr || "").slice(0, 7); }
+  function monthLabel(key, opts) {
+    const [y, m] = key.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("en-US", opts || { month: "long", year: "numeric" });
+  }
+  function dayLabel(dateStr) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  }
+  function shiftMonth(key, delta) {
+    const [y, m] = key.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+  function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 2600);
+  }
+
+  // ---------- Data layer ----------
+  // Firestore keeps a copy on the device, so the app works offline and syncs when back online.
+  // Writes show up on screen right away; we don't wait for the server, only report failures.
+  const configured = firebaseConfig && firebaseConfig.apiKey && !String(firebaseConfig.apiKey).startsWith("PASTE");
+  let fs = null, auth = null, uidPath = null, unsubs = [];
+
+  function write(promiseFn) {
+    try {
+      promiseFn().catch((e) => {
+        console.error(e);
+        if (e && e.code === "permission-denied") toast("This account can't change the ledger.");
+        else toast("That didn't save. Try again in a moment.");
+      });
+      return true;
+    } catch (e) { console.error(e); toast("That didn't save. Try again in a moment."); return false; }
+  }
+  const ref = (col, id) => doc(fs, "users", uidPath, col, id);
+  const api = {
+    async saveProduct(id, data) {
+      if (!fs) { const i = local.products.findIndex((p) => p.id === id); const rec = { id, ...data }; if (i >= 0) local.products[i] = rec; else local.products.push(rec); syncLocal(); return true; }
+      return write(() => setDoc(ref("products", id), data));
+    },
+    async patchProduct(id, data) {
+      if (!fs) { const p = local.products.find((p) => p.id === id); if (p) Object.assign(p, data); syncLocal(); return true; }
+      return write(() => updateDoc(ref("products", id), data));
+    },
+    async deleteProduct(id) {
+      if (!fs) { local.products = local.products.filter((p) => p.id !== id); syncLocal(); return true; }
+      return write(() => deleteDoc(ref("products", id)));
+    },
+    async saveSale(id, data) {
+      if (!fs) { const i = local.sales.findIndex((s) => s.id === id); const rec = { id, ...data }; if (i >= 0) local.sales[i] = rec; else local.sales.push(rec); syncLocal(); return true; }
+      return write(() => setDoc(ref("sales", id), data));
+    },
+    async deleteSale(id) {
+      if (!fs) { local.sales = local.sales.filter((s) => s.id !== id); syncLocal(); return true; }
+      return write(() => deleteDoc(ref("sales", id)));
+    },
+  };
+  function syncLocal() {
+    state.products = local.products.slice();
+    state.sales = local.sales.slice().sort(saleSort);
+    render();
+  }
+  const saleSort = (a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0);
+
+  function setSync(text) { document.getElementById("sync").textContent = text; }
+  function syncLabel(snap) {
+    if (snap.metadata.hasPendingWrites) return navigator.onLine ? "Saving…" : "Saved on this device";
+    return snap.metadata.fromCache ? "Offline" : "Synced";
+  }
+
+  function showApp(on) {
+    document.getElementById("signin").hidden = on;
+    document.getElementById("view").hidden = !on;
+    document.getElementById("tabs").hidden = !on;
+    document.getElementById("fab").hidden = !on;
+    document.getElementById("signout").hidden = !on || !fs;
+  }
+
+  function connect() {
+    if (!configured) {
+      // Demo mode: nothing is saved until firebase-config.js is filled in.
+      state.offline = true; state.loaded = { p: true, s: true };
+      const m = (d) => { const x = new Date(); x.setDate(x.getDate() - d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
+      local.products = [
+        { id: "ex1", name: "Sleepy Axolotl", price: 28, cost: 6.5, stock: 4, hours: 3, color: YARN[0], notes: "Example entry", example: true },
+        { id: "ex2", name: "Mushroom Frog", price: 22, cost: 4, stock: 1, hours: 2.5, color: YARN[3], notes: "Example entry", example: true },
+        { id: "ex3", name: "Tiny Whale", price: 15, cost: 2.5, stock: 6, hours: 1.5, color: YARN[4], notes: "Example entry", example: true },
+      ];
+      const ex = (id, pid, qty, price, d, ch) => { const p = local.products.find((x) => x.id === pid); return { id, productId: pid, productName: p.name, color: p.color, qty, unitPrice: price, total: qty * price, unitCost: p.cost, date: m(d), channel: ch, note: "", createdAt: Date.now() - d * 864e5, example: true }; };
+      local.sales = [ex("s1", "ex1", 1, 28, 2, "Craft fair"), ex("s2", "ex3", 3, 15, 2, "Craft fair"), ex("s3", "ex2", 1, 22, 9, "Etsy"), ex("s4", "ex1", 2, 28, 38, "Instagram"), ex("s5", "ex2", 1, 22, 70, "Custom order")];
+      setSync("Demo mode");
+      showApp(true); syncLocal();
+      return;
+    }
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    try { fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+    catch (e) { fs = initializeFirestore(app, {}); }
+
+    onAuthStateChanged(auth, (user) => {
+      unsubs.forEach((u) => u()); unsubs = [];
+      state.products = []; state.sales = []; state.loaded = { p: false, s: false };
+      if (!user) { uidPath = null; setSync(""); showApp(false); return; }
+      uidPath = user.uid;
+      showApp(true); render();
+      const onErr = (e) => { console.error(e); setSync("Can't load"); toast("Couldn't load the ledger. Check the Firestore rules in the setup guide."); };
+      unsubs.push(onSnapshot(collection(fs, "users", uidPath, "products"), { includeMetadataChanges: true }, (snap) => {
+        state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.loaded.p = true; setSync(syncLabel(snap)); render();
+      }, onErr));
+      unsubs.push(onSnapshot(query(collection(fs, "users", uidPath, "sales"), orderBy("date", "desc"), limit(2000)), { includeMetadataChanges: true }, (snap) => {
+        state.sales = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(saleSort);
+        state.loaded.s = true; setSync(syncLabel(snap)); render();
+      }, onErr));
+    });
+
+    document.getElementById("signin").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("si-err"), go = document.getElementById("si-go");
+      err.textContent = ""; go.disabled = true;
+      try {
+        await signInWithEmailAndPassword(auth, document.getElementById("si-email").value.trim(), document.getElementById("si-pass").value);
+      } catch (ex) {
+        const c = ex && ex.code || "";
+        err.textContent = c.includes("network") ? "No connection. Sign in once you're online." :
+          c.includes("too-many") ? "Too many tries. Wait a few minutes and try again." :
+          "That email and password don't match. Check them and try again.";
+      } finally { go.disabled = false; }
+    });
+    document.getElementById("signout").addEventListener("click", () => signOut(auth));
+  }
+
+  // ---------- Derived ----------
+  function productById(id) { return state.products.find((p) => p.id === id); }
+  function monthTotals(key) {
+    let revenue = 0, units = 0, cost = 0, orders = 0;
+    for (const s of state.sales) if (monthKey(s.date) === key) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders++; }
+    return { revenue: round2(revenue), units, profit: round2(revenue - cost), orders };
+  }
+  function soldByProduct() {
+    const m = new Map();
+    for (const s of state.sales) {
+      const k = s.productId || s.productName;
+      const cur = m.get(k) || { name: s.productName, units: 0, revenue: 0, color: s.color };
+      cur.units += s.qty || 0; cur.revenue += s.total || 0;
+      const p = productById(s.productId); if (p) { cur.name = p.name; cur.color = p.color; }
+      m.set(k, cur);
+    }
+    return m;
+  }
+  const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example);
+
+  // ---------- Render ----------
+  function render() {
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
+    const v = document.getElementById("view");
+    const active = document.activeElement && document.activeElement.id;
+    const caret = active === "q" ? document.activeElement.selectionStart : null;
+    let html = banners();
+    if (!(state.loaded.p && state.loaded.s)) html += `<div class="panel"><div class="empty">Loading your shop…</div></div>`;
+    else if (state.tab === "overview") html += overviewHTML();
+    else if (state.tab === "products") html += productsHTML();
+    else html += salesHTML();
+    v.innerHTML = html;
+    if (active === "q") { const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
+  }
+
+  function banners() {
+    let h = "";
+    if (state.offline) h += `<div class="banner">Demo mode: nothing is saved yet. Fill in firebase-config.js (see the README) to keep records and sync between devices.</div>`;
+    if (hasExamples() && !state.readOnly) h += `<div class="banner"><span>The entries marked <span class="chip ex">Example</span> are samples to show how things look.</span><button class="btn small" data-act="clear-examples" id="clear-ex">Remove examples</button></div>`;
+    return h;
+  }
+
+  function delta(cur, prev, isMoney) {
+    if (!prev) return cur ? `<span class="d">first month</span>` : `<span class="d">&nbsp;</span>`;
+    const diff = cur - prev;
+    const cls = diff > 0 ? "up" : diff < 0 ? "down" : "";
+    const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
+    const val = isMoney ? fmtShort(Math.abs(diff)) : Math.abs(diff);
+    return `<span class="d ${cls}">${sign}${val} vs last month</span>`;
+  }
+
+  function overviewHTML() {
+    const key = monthKey(todayStr());
+    const cur = monthTotals(key), prev = monthTotals(shiftMonth(key, -1));
+    const stats = `
+      <section class="panel">
+        <div class="month-head"><h2>${monthLabel(key, { month: "long" })} so far</h2><span class="label">${cur.orders} sale${cur.orders === 1 ? "" : "s"}</span></div>
+        <div class="stats num">
+          <div class="stat"><div class="label">Sales</div><div class="v">${fmtShort(cur.revenue)}</div>${delta(cur.revenue, prev.revenue, true)}</div>
+          <div class="stat"><div class="label">Plushies sold</div><div class="v">${cur.units}</div>${delta(cur.units, prev.units, false)}</div>
+          <div class="stat"><div class="label">After yarn</div><div class="v">${fmtShort(cur.profit)}</div><span class="d">sales minus materials</span></div>
+        </div>
+      </section>`;
+
+    // 6-month chart
+    const months = []; for (let i = 5; i >= 0; i--) months.push(shiftMonth(key, -i));
+    const vals = months.map((m) => monthTotals(m).revenue);
+    const max = Math.max(...vals, 0);
+    const W = 340, H = 168, top = 22, bottom = 22, left = 4, right = 4;
+    const ch = H - top - bottom, slot = (W - left - right) / months.length, bw = Math.min(34, slot * 0.58);
+    let bars = "";
+    months.forEach((m, i) => {
+      const val = vals[i];
+      const h = max > 0 ? Math.max(val > 0 ? 3 : 0, (val / max) * ch) : 0;
+      const x = left + slot * i + (slot - bw) / 2, y = top + ch - h;
+      const isCur = i === months.length - 1;
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="6" fill="var(--accent)" opacity="${isCur ? 1 : 0.45}"/>`;
+      if (val > 0) bars += `<text class="val num" x="${(x + bw / 2).toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle">${esc(money0.format(val))}</text>`;
+      bars += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(monthLabel(m, { month: "short" }))}</text>`;
+    });
+    const chart = `
+      <section class="panel chart">
+        <h2>Last six months</h2>
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sales by month for the last six months">
+          <line x1="0" x2="${W}" y1="${top + ch + 0.5}" y2="${top + ch + 0.5}" stroke="var(--line)" stroke-width="1"/>
+          ${bars}
+        </svg>
+        ${max === 0 ? `<div class="empty">Your monthly totals will show here once you record a sale.</div>` : ""}
+      </section>`;
+
+    // best sellers
+    const top5 = [...soldByProduct().values()].sort((a, b) => b.units - a.units || b.revenue - a.revenue).slice(0, 5);
+    const best = `
+      <section class="panel">
+        <h2>Best sellers</h2>
+        <div class="rows">
+          ${top5.length ? top5.map((p) => `
+            <div class="row"><span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+              <div class="main"><div class="title">${esc(p.name)}</div><div class="sub num">${fmt(p.revenue)} total</div></div>
+              <div class="amt num">${p.units} sold</div></div>`).join("") : `<div class="empty">No sales yet.</div>`}
+        </div>
+      </section>`;
+
+    const low = state.products.filter((p) => (p.stock || 0) <= 1).sort((a, b) => (a.stock || 0) - (b.stock || 0));
+    const lowHTML = `
+      <section class="panel">
+        <h2>Running low</h2>
+        <div class="rows">
+          ${low.length ? low.map((p) => `
+            <div class="row"><span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+              <div class="main"><div class="title">${esc(p.name)}</div><div class="sub">${p.stock ? "Last one in stock" : "Sold out"}</div></div>
+              <span class="chip low num">${p.stock || 0} left</span></div>`).join("") : `<div class="empty">${state.products.length ? "Everything has at least 2 in stock." : "Add your plushies on the Products tab to track stock."}</div>`}
+        </div>
+      </section>`;
+
+    const recent = state.sales.slice(0, 5);
+    const recentHTML = `
+      <section class="panel">
+        <div class="month-head"><h2>Recent sales</h2>${state.sales.length ? `<button class="linkbtn" data-go="sales">See all</button>` : ""}</div>
+        <div class="rows">${recent.length ? recent.map(saleRow).join("") : `<div class="empty">Tap “Record sale” after you sell a plushie.</div>`}</div>
+      </section>`;
+
+    return stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+  }
+
+  function saleRow(s) {
+    const p = productById(s.productId);
+    const name = p ? p.name : s.productName;
+    const color = (p && p.color) || s.color || YARN[6];
+    return `<div class="row salerow" data-sale="${esc(s.id)}" tabindex="0" role="button">
+      <span class="swatch" style="--sw:${esc(color)}"></span>
+      <div class="main"><div class="title">${esc(name)}${s.qty > 1 ? ` <span class="num">×${s.qty}</span>` : ""} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
+      <div class="sub">${esc(dayLabel(s.date))} · ${esc(s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
+      <div class="amt num">${fmt(s.total)}</div></div>`;
+  }
+
+  function productsHTML() {
+    const sold = soldByProduct();
+    const q = state.search.trim().toLowerCase();
+    const list = state.products
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q))
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    const stockTotal = state.products.reduce((n, p) => n + (p.stock || 0), 0);
+    const stockValue = state.products.reduce((n, p) => n + (p.stock || 0) * (p.price || 0), 0);
+    return `
+      <section class="panel">
+        <div class="toolbar">
+          <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
+          ${state.readOnly ? "" : `<button class="btn" data-act="new-product" id="new-product">Add plushie</button>`}
+        </div>
+        <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${state.products.length} design${state.products.length === 1 ? "" : "s"} · ${stockTotal} in stock · ${fmtShort(stockValue)} at full price</div>
+      </section>
+      ${list.length ? `<div class="cards">${list.map((p) => {
+        const s = sold.get(p.id) || { units: 0 };
+        const stock = p.stock || 0;
+        return `<article class="pcard">
+          <div class="top">
+            <span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+            <div class="main">
+              <div class="name">${esc(p.name)}</div>
+              <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
+              ${p.notes ? `<div class="meta">${esc(p.notes)}</div>` : ""}
+            </div>
+            ${state.readOnly ? "" : `<button class="linkbtn" data-edit="${esc(p.id)}" aria-label="Edit ${esc(p.name)}">Edit</button>`}
+          </div>
+          <div class="bottom">
+            <div>
+              ${p.example ? '<span class="chip ex">Example</span> ' : ""}${stock <= 1 ? `<span class="chip low">${stock ? "Last one" : "Sold out"}</span> ` : ""}<span class="label num">${s.units} sold</span>
+            </div>
+            <div class="stepper" aria-label="Stock for ${esc(p.name)}">
+              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="-1" aria-label="One fewer in stock">−</button>`}
+              <span class="n num">${stock}</span>
+              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="1" aria-label="One more in stock">+</button>`}
+            </div>
+          </div>
+        </article>`;
+      }).join("")}</div>` : `<section class="panel"><div class="empty">${state.products.length ? "No plushies match that search." : "No plushies yet. Add each design you make with its price and how many you have on hand."}</div></section>`}
+    `;
+  }
+
+  function salesHTML() {
+    const fp = state.filterProduct;
+    const list = state.sales.filter((s) => !fp || s.productId === fp);
+    const groups = new Map();
+    for (const s of list) { const k = monthKey(s.date); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    const opts = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+      .map((p) => `<option value="${esc(p.id)}" ${p.id === fp ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    const allRev = list.reduce((n, s) => n + (s.total || 0), 0), allUnits = list.reduce((n, s) => n + (s.qty || 0), 0);
+    return `
+      <section class="panel">
+        <div class="toolbar">
+          <select id="filter-product" aria-label="Show sales for" style="flex:1 1 200px">
+            <option value="">All plushies</option>${opts}
+          </select>
+          ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
+        </div>
+        <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${list.length} sale${list.length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)} all time</div>
+      </section>
+      <section class="panel">
+        ${groups.size ? [...groups.entries()].map(([k, arr]) => {
+          const tot = arr.reduce((n, s) => n + (s.total || 0), 0), u = arr.reduce((n, s) => n + (s.qty || 0), 0);
+          return `<div class="monthgroup"><h4><span>${esc(monthLabel(k))}</span><span class="num">${u} sold · ${fmt(tot)}</span></h4><div class="rows">${arr.map(saleRow).join("")}</div></div>`;
+        }).join("") : `<div class="empty">${fp ? "No sales for this plushie yet." : "No sales yet. Tap “Record sale” after each sale and your history builds up here, month by month."}</div>`}
+      </section>`;
+  }
+
+  // ---------- Sheets ----------
+  function openSheet(html, onMount) {
+    const root = document.getElementById("sheet-root");
+    root.innerHTML = `<div class="overlay" id="overlay"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+    const ov = document.getElementById("overlay");
+    ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(); });
+    onMount && onMount(root.querySelector(".sheet"));
+    const first = root.querySelector("input, select, textarea"); if (first && window.innerWidth > 640) first.focus();
+  }
+  function closeSheet() { document.getElementById("sheet-root").innerHTML = ""; }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+
+  function armDelete(btn, label, fn) {
+    btn.addEventListener("click", async () => {
+      if (!btn.classList.contains("armed")) { btn.classList.add("armed"); btn.textContent = "Tap again to delete"; setTimeout(() => { btn.classList.remove("armed"); btn.textContent = label; }, 3500); return; }
+      await fn();
+    });
+  }
+
+  function productSheet(p) {
+    const isNew = !p;
+    p = p || { name: "", price: "", cost: "", stock: 0, hours: "", notes: "", color: YARN[Math.floor(Math.random() * 8)] };
+    let color = p.color;
+    openSheet(`
+      <h3>${isNew ? "Add a plushie" : "Edit plushie"}</h3>
+      <form id="pform" class="fgrid" novalidate>
+        <label class="f full">Name<input id="p-name" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl"></label>
+        <label class="f">Price<input id="p-price" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.price)}" placeholder="28.00"></label>
+        <label class="f">In stock<input id="p-stock" inputmode="numeric" type="number" step="1" min="0" value="${esc(p.stock)}"></label>
+        <label class="f">Materials cost<input id="p-cost" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.cost)}" placeholder="Yarn, eyes, stuffing"></label>
+        <label class="f">Hours to make<input id="p-hours" inputmode="decimal" type="number" step="0.25" min="0" value="${esc(p.hours)}" placeholder="Optional"></label>
+        <div class="full"><div class="label" style="margin-bottom:6px">Yarn color</div><div class="colors" id="p-colors">
+          ${YARN.map((c) => `<button type="button" style="--sw:${c}" data-c="${c}" aria-label="Color ${c}" aria-pressed="${c === color}"></button>`).join("")}
+        </div></div>
+        <label class="f full">Notes<textarea id="p-notes" placeholder="Yarn brand, size, pattern">${esc(p.notes)}</textarea></label>
+      </form>
+      <div class="actions">
+        ${isNew ? "" : `<button class="btn danger" id="p-del" type="button">Delete</button>`}
+        <div class="right"><button class="btn ghost" type="button" id="p-cancel">Cancel</button><button class="btn" type="submit" form="pform" id="p-save">${isNew ? "Add plushie" : "Save"}</button></div>
+      </div>`, (el) => {
+      el.querySelector("#p-colors").addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-c]"); if (!b) return;
+        color = b.dataset.c;
+        el.querySelectorAll("#p-colors button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      });
+      el.querySelector("#p-cancel").addEventListener("click", closeSheet);
+      el.querySelector("#pform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const name = el.querySelector("#p-name").value.trim();
+        if (!name) { el.querySelector("#p-name").focus(); toast("Give the plushie a name."); return; }
+        const data = {
+          name,
+          price: round2(el.querySelector("#p-price").value),
+          cost: round2(el.querySelector("#p-cost").value),
+          stock: Math.max(0, parseInt(el.querySelector("#p-stock").value, 10) || 0),
+          hours: Number(el.querySelector("#p-hours").value) || 0,
+          notes: el.querySelector("#p-notes").value.trim(),
+          color,
+          createdAt: p.createdAt || Date.now(),
+        };
+        if (p.example) data.example = true;
+        const ok = await api.saveProduct(p.id || uid(), data);
+        if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
+      });
+      if (!isNew) armDelete(el.querySelector("#p-del"), "Delete", async () => {
+        if (await api.deleteProduct(p.id)) { closeSheet(); toast("Plushie deleted. Its past sales stay in your history."); }
+      });
+    });
+  }
+
+  function saleSheet(s) {
+    const isNew = !s;
+    if (!isNew && !s.id) return;
+    if (isNew && !state.products.length) { state.tab = "products"; render(); toast("Add a plushie first, then record its sales."); productSheet(); return; }
+    const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    s = s || { productId: products[0].id, qty: 1, unitPrice: products[0].price || 0, date: todayStr(), channel: CHANNELS[0], note: "" };
+    const originalQty = isNew ? 0 : s.qty || 0, originalProduct = isNew ? null : s.productId;
+    const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === s.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} in stock)</option>`).join("");
+    const missing = !isNew && !productById(s.productId) ? `<option value="${esc(s.productId)}" selected>${esc(s.productName)} (deleted)</option>` : "";
+    openSheet(`
+      <h3>${isNew ? "Record a sale" : "Edit sale"}</h3>
+      <form id="sform" class="fgrid" novalidate>
+        <label class="f full">Plushie<select id="s-product">${missing}${opts}</select></label>
+        <label class="f">How many<input id="s-qty" type="number" inputmode="numeric" min="1" step="1" value="${esc(s.qty)}"></label>
+        <label class="f">Price each<input id="s-price" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(s.unitPrice)}"></label>
+        <label class="f">Date<input id="s-date" type="date" value="${esc(s.date)}"></label>
+        <label class="f">Sold through<select id="s-channel">${CHANNELS.map((c) => `<option ${c === s.channel ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label class="f full">Note<input id="s-note" value="${esc(s.note)}" placeholder="Buyer, event, discount…"></label>
+      </form>
+      <div class="total-line"><span class="label">Total</span><span class="v num" id="s-total">${fmt(s.total || s.qty * s.unitPrice)}</span></div>
+      <div class="actions">
+        ${isNew ? "" : `<button class="btn danger" id="s-del" type="button">Delete</button>`}
+        <div class="right"><button class="btn ghost" type="button" id="s-cancel">Cancel</button><button class="btn" type="submit" form="sform" id="s-save">${isNew ? "Save sale" : "Save"}</button></div>
+      </div>`, (el) => {
+      const $ = (id) => el.querySelector(id);
+      const upd = () => { $("#s-total").textContent = fmt(round2((parseInt($("#s-qty").value, 10) || 0) * (Number($("#s-price").value) || 0))); };
+      $("#s-product").addEventListener("change", () => { const p = productById($("#s-product").value); if (p) $("#s-price").value = p.price || 0; upd(); });
+      $("#s-qty").addEventListener("input", upd); $("#s-price").addEventListener("input", upd);
+      $("#s-cancel").addEventListener("click", closeSheet);
+      $("#sform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const qty = parseInt($("#s-qty").value, 10);
+        if (!qty || qty < 1) { $("#s-qty").focus(); toast("Enter how many were sold."); return; }
+        const productId = $("#s-product").value, p = productById(productId);
+        const unitPrice = round2($("#s-price").value);
+        const data = {
+          productId, productName: p ? p.name : s.productName, color: p ? p.color : s.color || "",
+          qty, unitPrice, total: round2(qty * unitPrice), unitCost: p ? p.cost || 0 : s.unitCost || 0,
+          date: $("#s-date").value || todayStr(), channel: $("#s-channel").value, note: $("#s-note").value.trim(),
+          createdAt: s.createdAt || Date.now(),
+        };
+        if (s.example) data.example = true;
+        $("#s-save").disabled = true;
+        const ok = await api.saveSale(s.id || uid(), data);
+        if (!ok) { $("#s-save").disabled = false; return; }
+        // Adjust stock: give back the old quantity, take the new one
+        if (originalProduct && originalProduct !== productId) {
+          const op = productById(originalProduct); if (op) await api.patchProduct(op.id, { stock: (op.stock || 0) + originalQty });
+          if (p) await api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) - qty) });
+        } else if (p) {
+          const diff = qty - originalQty;
+          if (diff) await api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) - diff) });
+        }
+        closeSheet();
+        toast(isNew ? `Sale saved · ${fmt(data.total)}` : "Sale updated");
+      });
+      if (!isNew) armDelete($("#s-del"), "Delete", async () => {
+        if (await api.deleteSale(s.id)) {
+          const p = productById(s.productId); if (p) await api.patchProduct(p.id, { stock: (p.stock || 0) + (s.qty || 0) });
+          closeSheet(); toast("Sale deleted and stock put back");
+        }
+      });
+    });
+  }
+
+  async function clearExamples() {
+    const btn = document.getElementById("clear-ex"); if (btn) btn.disabled = true;
+    for (const s of state.sales.filter((x) => x.example)) await api.deleteSale(s.id);
+    for (const p of state.products.filter((x) => x.example)) await api.deleteProduct(p.id);
+    toast("Examples removed");
+  }
+
+  function downloadCSV() {
+    const q = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const rows = [["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Note"]];
+    for (const s of state.sales) {
+      const p = productById(s.productId);
+      rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), (s.unitCost || 0).toFixed(2), s.channel, s.note]);
+    }
+    const blob = new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `plushie-sales-${todayStr()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ---------- Events ----------
+  document.querySelector("nav.tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-tab]"); if (!b) return;
+    state.tab = b.dataset.tab; render(); window.scrollTo(0, 0);
+  });
+  document.getElementById("fab").addEventListener("click", () => saleSheet());
+  const view = document.getElementById("view");
+  view.addEventListener("click", (e) => {
+    const t = e.target;
+    const go = t.closest("[data-go]"); if (go) { state.tab = go.dataset.go; render(); window.scrollTo(0, 0); return; }
+    if (t.closest("[data-act='new-product']")) return productSheet();
+    if (t.closest("[data-act='clear-examples']")) return clearExamples();
+    if (t.closest("[data-act='csv']")) return downloadCSV();
+    const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
+    const st = t.closest("[data-stock]");
+    if (st) { const p = productById(st.dataset.stock); if (p) api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) + Number(st.dataset.d)) }); return; }
+    const sr = t.closest("[data-sale]");
+    if (sr && !state.readOnly) { const s = state.sales.find((x) => x.id === sr.dataset.sale); if (s) saleSheet(s); }
+  });
+  view.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches("[data-sale]")) e.target.click();
+  });
+  view.addEventListener("input", (e) => { if (e.target.id === "q") { state.search = e.target.value; render(); } });
+  view.addEventListener("change", (e) => { if (e.target.id === "filter-product") { state.filterProduct = e.target.value; render(); } });
+
+  render();
+  connect();
+}
+</script>
+</body>
+</html>
