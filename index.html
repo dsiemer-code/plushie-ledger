@@ -440,7 +440,7 @@ import {
         const L = window.__Html5QrcodeLibrary__, F = L.Html5QrcodeSupportedFormats;
         scanner = new L.Html5Qrcode("scan-view", {
           verbose: false,
-          formatsToSupport: [F.CODE_128, F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_39],
+          formatsToSupport: [F.CODE_128, F.QR_CODE, F.DATA_MATRIX, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_39],
           experimentalFeatures: { useBarCodeDetectorIfSupported: true },
         });
         await scanner.start({ facingMode: "environment" },
