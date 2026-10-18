@@ -171,6 +171,8 @@ h2.sect { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem
 .pcard .bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 2px dashed var(--line); }
 .pcard a.pattern { display: inline-flex; align-items: baseline; gap: 6px; margin-top: 6px; font-weight: 600; font-size: .88rem; color: var(--accent); text-decoration: none; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); max-width: 100%; }
 .pcard a.pattern .host { font-weight: 500; font-size: .76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pcard .tag-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.pcard .tag-row .linkbtn { padding: 4px 0; font-size: .88rem; }
 .stepper { display: inline-flex; align-items: center; gap: 4px; }
 .stepper button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.1rem; line-height: 1; }
 .stepper .n { min-width: 2.2ch; text-align: center; font-weight: 700; }
@@ -393,6 +395,14 @@ import {
     for (const s of list) { const k = s.payment || "Not recorded"; m.set(k, round2((m.get(k) || 0) + (s.total || 0))); }
     return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${fmt(v)}`).join(" · ");
   }
+
+  // ---------- Print list ----------
+  // How many tags are waiting to be printed for each plushie. Kept in settings so it syncs:
+  // she can add tags from her phone as she finishes plushies and print them together later.
+  const tagQueue = () => state.settings.tagQueue || {};
+  const queued = (pid) => Math.max(0, Math.floor(+(tagQueue()[pid] || 0)));
+  const queueTotal = () => state.products.reduce((n, p) => n + (p.price ? queued(p.id) : 0), 0);
+  const saveQueue = (changes) => api.saveSettings({ tagQueue: { ...tagQueue(), ...changes } });
 
   // ---------- Barcodes ----------
   const SCAN_LIB = "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js";
@@ -875,7 +885,7 @@ import {
       <section class="panel">
         <div class="toolbar">
           <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
-          ${state.readOnly ? "" : `<div style="display:flex;gap:8px"><button class="btn ghost" data-act="print-tags" type="button">Print tags</button><button class="btn" data-act="new-product" id="new-product">Add plushie</button></div>`}
+          ${state.readOnly ? "" : `<div style="display:flex;gap:8px"><button class="btn ghost" data-act="print-tags" type="button">Print tags${queueTotal() ? ` <span class="num">· ${queueTotal()}</span>` : ""}</button><button class="btn" data-act="new-product" id="new-product">Add plushie</button></div>`}
         </div>
         <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${state.products.length} design${state.products.length === 1 ? "" : "s"} · ${stockTotal} in stock · ${fmtShort(stockValue)} at full price</div>
       </section>
@@ -890,6 +900,7 @@ import {
               <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
               ${p.notes ? `<div class="meta">${esc(p.notes)}</div>` : ""}
               ${p.barcode ? `<div class="meta num">Barcode ${esc(p.barcode)}</div>` : ""}
+              ${state.readOnly ? "" : `<div class="tag-row"><button class="linkbtn" type="button" data-tag-add="${esc(p.id)}">+ Add tag</button>${queued(p.id) ? `<span class="chip num">${queued(p.id)} tag${queued(p.id) === 1 ? "" : "s"} to print</span>` : ""}</div>`}
               ${cleanUrl(p.pattern) ? `<a class="pattern" href="${esc(cleanUrl(p.pattern))}" target="_blank" rel="noopener noreferrer" title="${esc(p.pattern)}">Pattern<span aria-hidden="true"> ↗</span><span class="host">${esc(new URL(cleanUrl(p.pattern)).hostname.replace(/^www\./, ""))}</span></a>` : ""}
             </div>
             ${state.readOnly ? "" : `<button class="linkbtn" data-edit="${esc(p.id)}" aria-label="Edit ${esc(p.name)}">Edit</button>`}
@@ -1515,20 +1526,22 @@ import {
     const saved = state.settings.tagPrint || {};
     const opts = { dx: saved.dx || 0, dy: saved.dy || 0, flip: !!saved.flip };
     const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    const qty = new Map();
+    // Starts from the saved print list; changes here are saved back to it
+    const qty = new Map(products.filter((p) => p.price).map((p) => [p.id, queued(p.id)]));
     const total = () => [...qty.values()].reduce((n, v) => n + v, 0);
     openSheet(`
       <h3>Print tags</h3>
-      <p class="hint"><b>1.</b> Pick how many tags for each plushie and print the <b>fronts</b> on cardstock.
+      <p class="hint"><b>1.</b> Check the print list below (tags added with “+ Add tag” on a plushie are already here) and print the <b>fronts</b> on cardstock.
         <b>2.</b> Put the printed sheets back in the printer and print the <b>backs</b> on the other side.
-        <b>3.</b> Cut along the marks and punch the hole at the light circle.
+        <b>3.</b> Cut along the marks, punch the hole at the light circle, then tap <b>Clear list</b>.
         Print at 100% (“Actual size”). Try plain paper first to check the backs line up.</p>
-      <div class="f"><span style="display:flex;justify-content:space-between;align-items:baseline">How many of each <button type="button" class="linkbtn" id="t-stock">Match stock</button></span></div>
+      <div class="f"><span style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">Print list
+        <span style="display:flex;gap:14px"><button type="button" class="linkbtn" id="t-stock">Match stock</button><button type="button" class="linkbtn" id="t-clear">Clear list</button></span></span></div>
       <div class="rows" id="t-list">${products.length ? products.map((p) => `
         <div class="row" data-pid="${esc(p.id)}">
           ${avatar(p.photo, p.color)}
           <div class="main"><div class="title">${esc(p.name)}</div><div class="sub num">${p.price ? fmt(p.price) : "Set a default price to print tags"}${p.stock ? ` · ${p.stock} in stock` : ""}</div></div>
-          <div class="stepper"><button type="button" data-d="-1" aria-label="One fewer tag">−</button><span class="n num">0</span><button type="button" data-d="1" aria-label="One more tag" ${p.price ? "" : "disabled"}>+</button></div>
+          <div class="stepper"><button type="button" data-d="-1" aria-label="One fewer tag">−</button><span class="n num">${qty.get(p.id) || 0}</span><button type="button" data-d="1" aria-label="One more tag" ${p.price ? "" : "disabled"}>+</button></div>
         </div>`).join("") : `<div class="empty">Add plushies on the Products tab first.</div>`}</div>
       <div class="imp-box info num" id="t-sum" style="margin-top:12px"></div>
       <details class="t-align"><summary>Backs don't line up?</summary>
@@ -1560,10 +1573,10 @@ import {
       const summary = async () => {
         const { w, h } = await tagSize();
         per = sheetGrid(w, h).per;
-        const n = total();
+        const n = total(), left = sheets() * per - n;
         $("#t-sum").innerHTML = n
-          ? `<b>${n} tag${n === 1 ? "" : "s"}</b> · ${sheets()} sheet${sheets() === 1 ? "" : "s"} of cardstock · ${per} per sheet (${w}″ × ${h}″)`
-          : `Pick how many tags to print for each plushie. ${per} fit on a sheet (${w}″ × ${h}″).`;
+          ? `<b>${n} tag${n === 1 ? "" : "s"}</b> · ${sheets()} sheet${sheets() === 1 ? "" : "s"} of cardstock · ${left ? `${left} empty spot${left === 1 ? "" : "s"} left to fill` : "sheets full"} (${per} per sheet, ${w}″ × ${h}″)`
+          : `The print list is empty. Add tags with + below, or with “+ Add tag” on a plushie. ${per} fit on a sheet (${w}″ × ${h}″).`;
       };
       const sample = { name: "Plushie name", price: 12, barcode: "PL-0000" };
       const preview = async () => {
@@ -1578,12 +1591,21 @@ import {
           box.replaceChildren(page);
         } catch (e) { console.error(e); box.textContent = "Couldn't load the tag design. Check the internet connection."; }
       };
-      const refresh = () => { clearTimeout(timer); timer = setTimeout(async () => { await summary(); await preview(); }, 150); };
+      let saveTimer, lastSaved = JSON.stringify(Object.fromEntries(qty));
+      const refresh = () => {
+        clearTimeout(timer); timer = setTimeout(async () => { await summary(); await preview(); }, 150);
+        // keep the print list in sync (only when the counts changed)
+        clearTimeout(saveTimer); saveTimer = setTimeout(() => {
+          const now = JSON.stringify(Object.fromEntries(qty));
+          if (now !== lastSaved) { lastSaved = now; saveQueue(Object.fromEntries(qty)); }
+        }, 500);
+      };
       const setQty = (pid, n) => {
         qty.set(pid, Math.max(0, n));
         const row = el.querySelector(`[data-pid="${CSS.escape(pid)}"]`);
         if (row) row.querySelector(".n").textContent = qty.get(pid);
       };
+      $("#t-clear").addEventListener("click", () => { for (const pid of qty.keys()) setQty(pid, 0); refresh(); toast("Print list cleared"); });
       $("#t-list").addEventListener("click", (e) => {
         const b = e.target.closest("[data-d]"); if (!b) return;
         const pid = b.closest("[data-pid]").dataset.pid;
@@ -1861,6 +1883,13 @@ import {
     if (t.closest("[data-act='import']")) return importSheet();
     if (t.closest("[data-act='new-event']")) return eventSheet();
     if (t.closest("[data-act='print-tags']")) return tagSheet();
+    const ta = t.closest("[data-tag-add]");
+    if (ta) {
+      const p = productById(ta.dataset.tagAdd); if (!p) return;
+      if (!p.price) { toast("Set a default price first; it prints on the tag."); return productSheet(p); }
+      const n = queued(p.id) + 1; saveQueue({ [p.id]: n });
+      return toast(`${p.name}: ${n} tag${n === 1 ? "" : "s"} in the print list`);
+    }
     const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
