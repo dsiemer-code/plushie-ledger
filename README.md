@@ -51,6 +51,8 @@ Recording a sale lowers that plushie's stock; editing or deleting a sale puts th
 
 **Product photos** are shrunk to about 640 px and stored with the product in Firestore, so they need no paid Firebase Storage plan and work offline.
 
+**Recording a sale:** tap **Record sale**. Add one line per plushie the buyer takes (**+ Add another plushie**), with how many and the price each. The price fills in from the plushie's default price and can be typed over for a discount. A plushie that isn't set up yet can be typed in with **+ New plushie…**; it's added to Products with 0 in stock. Each plushie is saved as its own line, linked to the rest of the sale, and the lists show the sale as one row.
+
 **Pattern link:** each plushie can store the web address of its crochet pattern. The product card then shows a **Pattern ↗** button that opens it in a new tab.
 
 ## Events (craft shows)

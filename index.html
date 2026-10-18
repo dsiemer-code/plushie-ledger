@@ -207,6 +207,16 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .colors { display: flex; gap: 8px; flex-wrap: wrap; }
 .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; background: var(--sw); padding: 0; }
 .colors button[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface) inset; }
+/* Sale lines (one per plushie) */
+.line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; margin-bottom: 8px; }
+.line-top { display: flex; gap: 8px; align-items: center; }
+.line-top select { flex: 1; min-width: 0; }
+.l-remove { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.2rem; line-height: 1; flex: none; }
+.line-bottom { display: flex; align-items: center; gap: 8px; }
+.l-price { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--muted); font-weight: 600; }
+.l-price input { min-width: 0; }
+.l-price span { white-space: nowrap; }
+.l-sub { font-weight: 700; min-width: 64px; text-align: right; }
 .total-line { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; padding-top: 12px; border-top: 2px dashed var(--line); }
 .total-line .v { font-family: var(--font-display); font-size: 1.4rem; font-weight: 600; }
 
@@ -500,10 +510,20 @@ import {
     const yr = ev.start.slice(0, 4) !== todayStr().slice(0, 4) ? ", " + ev.start.slice(0, 4) : "";
     return dayLabel(ev.start) + (evEnd(ev) !== ev.start ? " – " + dayLabel(evEnd(ev)) : "") + yr;
   }
+  // Lines bought together share an orderId; older/imported lines are their own order
+  function orderKey(s) { return s.orderId || s.id; }
+  const entered = (a, b) => (a.createdAt || 0) - (b.createdAt || 0); // lines in the order she added them
+  function orderLines(s) { const k = orderKey(s); return state.sales.filter((x) => orderKey(x) === k).sort(entered); }
+  function groupOrders(list) {
+    const m = new Map();
+    for (const s of list) { const k = orderKey(s); if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
+    return [...m.values()].map((g) => g.sort(entered));
+  }
   function eventTotals(ev) {
-    let revenue = 0, units = 0, cost = 0, orders = 0;
-    for (const s of state.sales) if (s.eventId === ev.id) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders++; }
-    return { revenue: round2(revenue), units, orders, profit: round2(revenue - cost - (ev.fee || 0)) };
+    let revenue = 0, units = 0, cost = 0;
+    const orders = new Set();
+    for (const s of state.sales) if (s.eventId === ev.id) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders.add(orderKey(s)); }
+    return { revenue: round2(revenue), units, orders: orders.size, profit: round2(revenue - cost - (ev.fee || 0)) };
   }
   // Happening now first, then coming up (soonest first), then past (most recent first)
   function eventsInPickOrder() {
@@ -620,7 +640,7 @@ import {
         </div>
       </section>`;
 
-    const recent = state.sales.slice(0, 5);
+    const recent = groupOrders(state.sales).slice(0, 5);
     const recentHTML = `
       <section class="panel">
         <div class="month-head"><h2>Recent sales</h2>${state.sales.length ? `<button class="linkbtn" data-go="sales">See all</button>` : ""}</div>
@@ -665,15 +685,18 @@ import {
     return nowPanels + nextHTML + stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
-  function saleRow(s) {
-    const p = productById(s.productId);
-    const name = p ? p.name : s.productName;
+  // One row per sale; a sale with several plushies lists them together
+  function saleRow(lines) {
+    const s = lines[0], p = productById(s.productId);
     const color = (p && p.color) || s.color || YARN[6];
+    const label = (x) => { const q = productById(x.productId); return esc(q ? q.name : x.productName) + (x.qty > 1 ? ` <span class="num">×${x.qty}</span>` : ""); };
+    const names = lines.slice(0, 3).map(label).join(", ") + (lines.length > 3 ? `, +${lines.length - 3} more` : "");
+    const total = lines.reduce((n, x) => n + (x.total || 0), 0);
     return `<div class="row salerow" data-sale="${esc(s.id)}" tabindex="0" role="button">
       ${avatar(p && p.photo, color)}
-      <div class="main"><div class="title">${esc(name)}${s.qty > 1 ? ` <span class="num">×${s.qty}</span>` : ""} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
+      <div class="main"><div class="title">${names} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
       <div class="sub">${esc(dayLabel(s.date))} · ${esc(saleEventName(s) || s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
-      <div class="amt num">${fmt(s.total)}</div></div>`;
+      <div class="amt num">${fmt(total)}</div></div>`;
   }
 
   function productsHTML() {
@@ -789,12 +812,12 @@ import {
             ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
           </div>
         </div>
-        <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${list.length} sale${list.length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)}${fe ? "" : " all time"}</div>
+        <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${groupOrders(list).length} sale${groupOrders(list).length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)}${fe ? "" : " all time"}</div>
       </section>
       <section class="panel">
         ${groups.size ? [...groups.entries()].map(([k, arr]) => {
           const tot = arr.reduce((n, s) => n + (s.total || 0), 0), u = arr.reduce((n, s) => n + (s.qty || 0), 0);
-          return `<div class="monthgroup"><h4><span>${esc(monthLabel(k))}</span><span class="num">${u} sold · ${fmt(tot)}</span></h4><div class="rows">${arr.map(saleRow).join("")}</div></div>`;
+          return `<div class="monthgroup"><h4><span>${esc(monthLabel(k))}</span><span class="num">${u} sold · ${fmt(tot)}</span></h4><div class="rows">${groupOrders(arr).map(saleRow).join("")}</div></div>`;
         }).join("") : `<div class="empty">${fp || fe ? "No sales match these filters." : "No sales yet. Tap “Record sale” after each sale and your history builds up here, month by month."}</div>`}
       </section>`;
   }
@@ -834,7 +857,7 @@ import {
           </div>
         </div>
         <label class="f full">Name<input id="p-name" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl"></label>
-        <label class="f">Price<input id="p-price" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.price)}" placeholder="28.00"></label>
+        <label class="f">Default price<input id="p-price" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.price)}" placeholder="28.00"></label>
         <label class="f">In stock<input id="p-stock" inputmode="numeric" type="number" step="1" min="0" value="${esc(p.stock)}"></label>
         <label class="f">Materials cost<input id="p-cost" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.cost)}" placeholder="Yarn, eyes, stuffing"></label>
         <label class="f">Hours to make<input id="p-hours" inputmode="decimal" type="number" step="0.25" min="0" value="${esc(p.hours)}" placeholder="Optional"></label>
@@ -933,49 +956,111 @@ import {
     });
   }
 
-  function saleSheet(s) {
-    const isNew = !s;
-    if (!isNew && !s.id) return;
-    if (isNew && !state.products.length) { state.tab = "products"; render(); toast("Add a plushie first, then record its sales."); productSheet(); return; }
+  // A sale can hold several plushies. Each plushie is stored as its own sales line (so stock, best sellers
+  // and per-show totals work per plushie); lines bought together share an orderId.
+  function saleSheet(orig) {
+    const isNew = !orig || !orig.length;
+    const first = isNew ? null : orig[0];
+    const imported = !isNew && orig.some((x) => x.imported);
     const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     // She sells only at shows: a new sale starts at today's event, otherwise the event of the last sale she recorded
     const by = eventsInPickOrder();
     const last = state.sales.filter((x) => !x.imported).reduce((a, b) => ((b.createdAt || 0) > ((a && a.createdAt) || 0) ? b : a), null);
+    let head;
     if (isNew) {
       const evId = by.now.length ? by.now[0].id : last && eventById(last.eventId) ? last.eventId : "";
-      s = { productId: products[0].id, qty: 1, unitPrice: products[0].price || 0, date: todayStr(), eventId: evId,
-        channel: evId ? "Craft fair" : lastOffShowChannel(), note: "" };
+      head = { date: todayStr(), eventId: evId, eventName: "", channel: evId ? "Craft fair" : lastOffShowChannel(), note: "" };
+    } else {
+      head = { date: first.date, eventId: first.eventId || "", eventName: first.eventName || "", channel: first.channel || "", note: first.note || "" };
     }
-    const evOpt = (ev) => `<option value="${esc(ev.id)}" ${ev.id === s.eventId ? "selected" : ""}>${esc(ev.name)} · ${esc(evDates(ev))}</option>`;
+    // With no plushies set up yet, a line opens ready to type a new one
+    const blankLine = () => ({ productId: products.length ? "" : "__new", qty: 1, price: "", newName: "" });
+    const lines = isNew ? [blankLine()]
+      : orig.map((x) => ({ docId: x.id, productId: x.productId, productName: x.productName, color: x.color, unitCost: x.unitCost, qty: x.qty || 1, price: x.unitPrice ?? "", newName: "" }));
+
+    const evOpt = (ev) => `<option value="${esc(ev.id)}" ${ev.id === head.eventId ? "selected" : ""}>${esc(ev.name)} · ${esc(evDates(ev))}</option>`;
     const evGroup = (label, list) => (list.length ? `<optgroup label="${label}">${list.map(evOpt).join("")}</optgroup>` : "");
-    const evMissing = s.eventId && !eventById(s.eventId) ? `<option value="${esc(s.eventId)}" selected>${esc(s.eventName || "Deleted event")} (deleted)</option>` : "";
+    const evMissing = head.eventId && !eventById(head.eventId) ? `<option value="${esc(head.eventId)}" selected>${esc(head.eventName || "Deleted event")} (deleted)</option>` : "";
     const evSelect = `<option value="">No event</option>${evMissing}${evGroup("Today", by.now)}${evGroup("Coming up", by.upcoming)}${evGroup("Past", by.past.slice(0, 25))}<option value="__new">+ New event…</option>`;
-    const originalQty = isNew ? 0 : s.qty || 0, originalProduct = isNew ? null : s.productId;
-    const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === s.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} in stock)</option>`).join("");
-    const missing = !isNew && !productById(s.productId) ? `<option value="${esc(s.productId)}" selected>${esc(s.productName)} (not in Products)</option>` : "";
-    const channels = s.channel && !CHANNELS.includes(s.channel) ? [...CHANNELS, s.channel] : CHANNELS;
+    const channels = head.channel && !CHANNELS.includes(head.channel) ? [...CHANNELS, head.channel] : CHANNELS;
+
+    const lineTotal = (ln) => round2(ln.qty * (Number(ln.price) || 0));
+    const lineHTML = (ln, i) => {
+      const missing = ln.productId && ln.productId !== "__new" && !productById(ln.productId)
+        ? `<option value="${esc(ln.productId)}" selected>${esc(ln.productName || "Plushie")} (not in Products)</option>` : "";
+      const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === ln.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} left)</option>`).join("");
+      return `<div class="line" data-i="${i}">
+        <div class="line-top">
+          <select class="l-product" aria-label="Plushie">${products.length ? `<option value="" ${ln.productId ? "" : "selected"}>Choose a plushie…</option>` : ""}${missing}${opts}<option value="__new" ${ln.productId === "__new" ? "selected" : ""}>+ New plushie…</option></select>
+          ${lines.length > 1 ? `<button type="button" class="l-remove" aria-label="Remove this plushie">×</button>` : ""}
+        </div>
+        ${ln.productId === "__new" ? `<input class="l-newname" autocomplete="off" placeholder="New plushie's name" value="${esc(ln.newName)}" aria-label="New plushie name">` : ""}
+        <div class="line-bottom">
+          <div class="stepper"><button type="button" class="l-minus" aria-label="One fewer">−</button><span class="n num">${ln.qty}</span><button type="button" class="l-plus" aria-label="One more">+</button></div>
+          <label class="l-price"><span aria-hidden="true">× $</span><input class="l-pricein" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(ln.price)}" placeholder="Price" aria-label="Price each"></label>
+          <span class="l-sub num">${fmt(lineTotal(ln))}</span>
+        </div>
+      </div>`;
+    };
+
     openSheet(`
       <h3>${isNew ? "Record a sale" : "Edit sale"}</h3>
-      ${s.imported ? `<p class="hint">Imported past sale. Changing or deleting it won't affect current stock.</p>` : ""}
+      ${imported ? `<p class="hint">Imported past sale. Changing or deleting it won't affect current stock.</p>` : ""}
+      <div id="s-lines"></div>
+      <button type="button" class="btn ghost small" id="s-addline" style="margin-bottom:14px">+ Add another plushie</button>
       <form id="sform" class="fgrid" novalidate>
-        <label class="f full">Plushie<select id="s-product">${missing}${opts}</select></label>
-        <label class="f">How many<input id="s-qty" type="number" inputmode="numeric" min="1" step="1" value="${esc(s.qty)}"></label>
-        <label class="f">Price each<input id="s-price" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(s.unitPrice)}"></label>
-        <label class="f">Date<input id="s-date" type="date" value="${esc(s.date)}"></label>
-        <label class="f">Sold through<select id="s-channel">${channels.map((c) => `<option ${c === s.channel ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
         <label class="f full">Event<select id="s-event">${evSelect}</select></label>
         <label class="f full" id="s-newev-wrap" hidden>New event name<input id="s-newev" placeholder="e.g. Holiday Craft Fair"></label>
-        <label class="f full">Note<input id="s-note" value="${esc(s.note)}" placeholder="Buyer, discount…"></label>
+        <label class="f">Date<input id="s-date" type="date" value="${esc(head.date)}"></label>
+        <label class="f">Sold through<select id="s-channel">${channels.map((c) => `<option ${c === head.channel ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+        <label class="f full">Note<input id="s-note" value="${esc(head.note)}" placeholder="Buyer, discount…"></label>
       </form>
-      <div class="total-line"><span class="label">Total</span><span class="v num" id="s-total">${fmt(s.total || s.qty * s.unitPrice)}</span></div>
+      <div class="total-line"><span class="label" id="s-count">Total</span><span class="v num" id="s-total"></span></div>
       <div class="actions">
-        ${isNew ? "" : `<button class="btn danger" id="s-del" type="button">Delete</button>`}
+        ${isNew ? "" : `<button class="btn danger" id="s-del" type="button">Delete sale</button>`}
         <div class="right"><button class="btn ghost" type="button" id="s-cancel">Cancel</button><button class="btn" type="submit" form="sform" id="s-save">${isNew ? "Save sale" : "Save"}</button></div>
       </div>`, (el) => {
       const $ = (id) => el.querySelector(id);
-      const upd = () => { $("#s-total").textContent = fmt(round2((parseInt($("#s-qty").value, 10) || 0) * (Number($("#s-price").value) || 0))); };
-      $("#s-product").addEventListener("change", () => { const p = productById($("#s-product").value); if (p) $("#s-price").value = p.price || 0; upd(); });
-      $("#s-qty").addEventListener("input", upd); $("#s-price").addEventListener("input", upd);
+      const box = $("#s-lines");
+      const updTotal = () => {
+        const units = lines.reduce((n, ln) => n + ln.qty, 0);
+        $("#s-total").textContent = fmt(lines.reduce((n, ln) => n + lineTotal(ln), 0));
+        $("#s-count").textContent = units > 1 ? `Total · ${units} plushies` : "Total";
+      };
+      const renderLines = () => { box.innerHTML = lines.map(lineHTML).join(""); updTotal(); };
+      renderLines();
+      const lineOf = (t) => { const d = t.closest(".line"); return d ? [lines[+d.dataset.i], d] : [null, null]; };
+
+      box.addEventListener("change", (e) => {
+        if (!e.target.matches(".l-product")) return;
+        const [ln, d] = lineOf(e.target), i = +d.dataset.i;
+        ln.productId = e.target.value;
+        const p = productById(ln.productId);
+        if (p) ln.price = p.price || p.price === 0 ? p.price : ""; // default price, which she can type over
+        renderLines();
+        const row = box.querySelectorAll(".line")[i];
+        if (ln.productId === "__new") row.querySelector(".l-newname").focus();
+      });
+      box.addEventListener("input", (e) => {
+        const [ln, d] = lineOf(e.target); if (!ln) return;
+        if (e.target.matches(".l-newname")) ln.newName = e.target.value;
+        if (e.target.matches(".l-pricein")) { ln.price = e.target.value; d.querySelector(".l-sub").textContent = fmt(lineTotal(ln)); updTotal(); }
+      });
+      box.addEventListener("click", (e) => {
+        const [ln, d] = lineOf(e.target); if (!ln) return;
+        if (e.target.closest(".l-remove")) { lines.splice(+d.dataset.i, 1); renderLines(); return; }
+        const step = e.target.closest(".l-minus") ? -1 : e.target.closest(".l-plus") ? 1 : 0;
+        if (step) {
+          ln.qty = Math.max(1, ln.qty + step);
+          d.querySelector(".n").textContent = ln.qty; d.querySelector(".l-sub").textContent = fmt(lineTotal(ln)); updTotal();
+        }
+      });
+      $("#s-addline").addEventListener("click", () => {
+        lines.push(blankLine()); renderLines();
+        const sel = box.querySelectorAll(".l-product")[lines.length - 1]; sel.focus();
+        sel.scrollIntoView({ block: "nearest" });
+      });
+
       $("#s-event").addEventListener("change", () => {
         const v = $("#s-event").value, ev = eventById(v);
         $("#s-newev-wrap").hidden = v !== "__new";
@@ -985,52 +1070,79 @@ import {
         if (ev) { const d = $("#s-date").value; if (!d || d < ev.start || d > evEnd(ev)) $("#s-date").value = todayStr() >= ev.start && todayStr() <= evEnd(ev) ? todayStr() : ev.start; }
       });
       $("#s-cancel").addEventListener("click", closeSheet);
+
       $("#sform").addEventListener("submit", async (e) => {
         e.preventDefault();
-        const qty = parseInt($("#s-qty").value, 10);
-        if (!qty || qty < 1) { $("#s-qty").focus(); toast("Enter how many were sold."); return; }
-        const productId = $("#s-product").value, p = productById(productId);
-        const unitPrice = round2($("#s-price").value);
-        const date = $("#s-date").value || todayStr();
-        let eventId = $("#s-event").value, eventName = "";
-        if (eventId === "__new") {
-          const name = $("#s-newev").value.trim();
-          if (!name) { $("#s-newev").focus(); toast("Give the new event a name."); return; }
-          eventId = uid(); eventName = name;
-          if (!(await api.saveEvent(eventId, { name, start: date, end: date, location: "", fee: 0, notes: "", createdAt: Date.now() }))) return;
-        } else if (eventId) {
-          eventName = (eventById(eventId) || {}).name || s.eventName || "";
+        const rows = box.querySelectorAll(".line"), which = (i) => (lines.length > 1 ? ` for plushie ${i + 1}` : "");
+        for (const [i, ln] of lines.entries()) {
+          if (!ln.productId) { rows[i].querySelector(".l-product").focus(); toast(`Choose a plushie${which(i)}.`); return; }
+          if (ln.productId === "__new" && !ln.newName.trim()) { rows[i].querySelector(".l-newname").focus(); toast(`Type the new plushie's name${which(i)}.`); return; }
+          if (String(ln.price).trim() === "" || !(Number(ln.price) >= 0)) { rows[i].querySelector(".l-pricein").focus(); toast(`Enter the price${which(i)}.`); return; }
         }
-        const data = {
-          productId, productName: p ? p.name : s.productName, color: p ? p.color : s.color || "",
-          qty, unitPrice, total: round2(qty * unitPrice), unitCost: p ? p.cost || 0 : s.unitCost || 0,
-          date, channel: $("#s-channel").value, eventId, eventName, note: $("#s-note").value.trim(),
-          createdAt: s.createdAt || Date.now(),
-        };
-        if (s.example) data.example = true;
-        if (s.imported) data.imported = true;
+        const date = $("#s-date").value || todayStr(), channel = $("#s-channel").value, note = $("#s-note").value.trim();
+        let eventId = $("#s-event").value, eventName = "";
+        if (eventId === "__new" && !$("#s-newev").value.trim()) { $("#s-newev").focus(); toast("Give the new event a name."); return; }
         $("#s-save").disabled = true;
-        const ok = await api.saveSale(s.id || uid(), data);
-        if (!ok) { $("#s-save").disabled = false; return; }
-        // Adjust stock: give back the old quantity, take the new one.
-        // Imported past sales never touched current stock, so editing them doesn't either.
-        if (s.imported) { /* no stock change */ }
-        else if (originalProduct && originalProduct !== productId) {
-          const op = productById(originalProduct); if (op) await api.patchProduct(op.id, { stock: (op.stock || 0) + originalQty });
-          if (p) await api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) - qty) });
-        } else if (p) {
-          const diff = qty - originalQty;
-          if (diff) await api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) - diff) });
+        const fail = () => { $("#s-save").disabled = false; };
+        if (eventId === "__new") {
+          eventName = $("#s-newev").value.trim(); eventId = uid();
+          if (!(await api.saveEvent(eventId, { name: eventName, start: date, end: date, location: "", fee: 0, notes: "", createdAt: Date.now() }))) return fail();
+        } else if (eventId) {
+          eventName = (eventById(eventId) || {}).name || head.eventName || "";
+        }
+        // Plushies typed in at the booth: reuse one with the same name, or add it to Products (none left in stock)
+        const created = new Map();
+        for (const ln of lines) {
+          if (ln.productId !== "__new") continue;
+          const name = ln.newName.trim(), key = name.toLowerCase();
+          let p = state.products.find((x) => (x.name || "").trim().toLowerCase() === key) || created.get(key);
+          if (!p) {
+            p = { id: uid(), name, price: round2(ln.price), cost: 0, stock: 0, hours: 0, notes: "", color: YARN[Math.floor(Math.random() * 8)], createdAt: Date.now() };
+            const { id, ...pdata } = p;
+            if (!(await api.saveProduct(id, pdata))) return fail();
+            created.set(key, p);
+          }
+          ln.productId = p.id; ln.made = p;
+        }
+        // Save each line; stock: give back what the sale had, take what it has now (imported sales never touch stock)
+        const orderId = isNew ? uid() : first.orderId || first.id;
+        const now = Date.now(), keep = new Set(), delta = new Map();
+        const addDelta = (pid, d) => delta.set(pid, (delta.get(pid) || 0) + d);
+        if (!isNew && !imported) for (const x of orig) addDelta(x.productId, x.qty || 0);
+        for (const [i, ln] of lines.entries()) {
+          const p = ln.made || productById(ln.productId);
+          const prev = ln.docId ? orig.find((x) => x.id === ln.docId) : null;
+          const unitPrice = round2(ln.price);
+          const data = {
+            productId: ln.productId, productName: p ? p.name : ln.productName || "", color: p ? p.color || "" : ln.color || "",
+            qty: ln.qty, unitPrice, total: round2(ln.qty * unitPrice), unitCost: p ? p.cost || 0 : ln.unitCost || 0,
+            date, channel, eventId, eventName, note, orderId, createdAt: (prev && prev.createdAt) || now + i,
+          };
+          if (first && first.example) data.example = true;
+          if (imported) data.imported = true;
+          const id = ln.docId || uid(); keep.add(id);
+          if (!(await api.saveSale(id, data))) return fail();
+          if (!imported) addDelta(ln.productId, -ln.qty);
+        }
+        if (!isNew) for (const x of orig) if (!keep.has(x.id)) await api.deleteSale(x.id);
+        for (const [pid, d] of delta) {
+          const p = productById(pid);
+          if (d && p && ![...created.values()].some((c) => c.id === pid)) await api.patchProduct(pid, { stock: Math.max(0, (p.stock || 0) + d) });
         }
         closeSheet();
-        toast(isNew ? `Sale saved · ${fmt(data.total)}` : "Sale updated");
+        const units = lines.reduce((n, ln) => n + ln.qty, 0), total = lines.reduce((n, ln) => n + lineTotal(ln), 0);
+        toast(isNew ? `Sale saved · ${units > 1 ? `${units} plushies · ` : ""}${fmt(total)}` : "Sale updated");
       });
-      if (!isNew) armDelete($("#s-del"), "Delete", async () => {
-        if (await api.deleteSale(s.id)) {
-          const p = !s.imported && productById(s.productId);
-          if (p) await api.patchProduct(p.id, { stock: (p.stock || 0) + (s.qty || 0) });
-          closeSheet(); toast(p ? "Sale deleted and stock put back" : "Sale deleted");
+
+      if (!isNew) armDelete($("#s-del"), "Delete sale", async () => {
+        for (const x of orig) if (!(await api.deleteSale(x.id))) return;
+        let back = false;
+        if (!imported) {
+          const qty = new Map();
+          for (const x of orig) qty.set(x.productId, (qty.get(x.productId) || 0) + (x.qty || 0));
+          for (const [pid, q] of qty) { const p = productById(pid); if (p) { await api.patchProduct(pid, { stock: (p.stock || 0) + q }); back = true; } }
         }
+        closeSheet(); toast(back ? "Sale deleted and stock put back" : "Sale deleted");
       });
     });
   }
@@ -1307,7 +1419,7 @@ import {
     const st = t.closest("[data-stock]");
     if (st) { const p = productById(st.dataset.stock); if (p) api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) + Number(st.dataset.d)) }); return; }
     const sr = t.closest("[data-sale]");
-    if (sr && !state.readOnly) { const s = state.sales.find((x) => x.id === sr.dataset.sale); if (s) saleSheet(s); }
+    if (sr && !state.readOnly) { const s = state.sales.find((x) => x.id === sr.dataset.sale); if (s) saleSheet(orderLines(s)); }
   });
   view.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.target.matches("[data-sale]")) e.target.click();
