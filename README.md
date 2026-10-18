@@ -43,10 +43,21 @@ Open the GitHub Pages link on her phone and sign in.
 
 ## What's stored
 ```
-users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, notes
+users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, photo, notes
 users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, date, where it sold, note
 ```
 Recording a sale lowers that plushie's stock; editing or deleting a sale puts the stock back.
+
+**Product photos** are shrunk to about 640 px and stored with the product in Firestore, so they need no paid Firebase Storage plan and work offline.
+
+## Importing old sales
+Sales tab → **Import CSV**. From Excel, use **File → Save As → CSV**. The first row needs headings: `Date, Plushie, Quantity, Price each` (or `Total`). `Sold through`, `Note` and `Materials each` are optional. **Blank template** downloads an empty file with the right headings, and a file from **Download CSV** imports as-is.
+
+- Dates can be `2024-03-14`, `3/14/2024`, `3/14/24`, `Mar 14, 2024`, or Excel date numbers.
+- A preview shows what will be added and lists rows it can't read, by row number.
+- Sales already in the ledger are skipped, so importing the same file twice is safe.
+- Plushies not yet in Products can be added automatically, with 0 in stock.
+- Imported sales don't change current stock.
 
 The free plan allows 50,000 reads and 20,000 writes per day and 1 GB of storage, far more than a craft business will use.
 

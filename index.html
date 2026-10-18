@@ -113,6 +113,33 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .swatch { width: 34px; height: 34px; border-radius: 50%; flex: none; position: relative;
   background: var(--sw, #b9a3d0); box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
 .swatch::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; border: 1.5px dashed rgba(255,255,255,.7); }
+.swatch.lg { width: 48px; height: 48px; }
+.thumb { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: none; background: var(--line); }
+.thumb.lg { width: 64px; height: 64px; border-radius: 12px; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+
+/* Product photo */
+.photo-edit { display: flex; gap: 14px; align-items: center; }
+.photo-edit img, .photo-empty { width: 96px; height: 96px; border-radius: 12px; flex: none; }
+.photo-edit img { object-fit: cover; }
+.photo-empty { border: 2px dashed var(--line); display: grid; place-items: center; color: var(--muted); font-size: .78rem; text-align: center; padding: 8px; }
+.photo-edit .opts { display: grid; gap: 6px; justify-items: start; }
+
+/* Import */
+.sheet p.hint { margin: 0 0 12px; color: var(--muted); font-size: .9rem; }
+.sheet p.hint code { font-size: .82rem; }
+.imp-sum { font-size: .95rem; margin-bottom: 10px; }
+.imp-box { border-radius: 10px; padding: 10px 12px; font-size: .85rem; margin-bottom: 10px; }
+.imp-box.warn { background: var(--warn-soft); }
+.imp-box.info { background: var(--accent-soft); }
+.imp-box ul { margin: 6px 0 0; padding-left: 18px; }
+.imp-box label { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; }
+.imp-box input[type=checkbox] { width: auto; margin-top: 3px; }
+.imp-scroll { overflow-x: auto; }
+.imp-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.imp-table th { text-align: left; font-weight: 700; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; }
+.imp-table td { padding: 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+.imp-table td.r, .imp-table th.r { text-align: right; }
 
 .chip { display: inline-block; font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .chip.low { background: var(--warn-soft); color: var(--warn); }
@@ -227,7 +254,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit,
+  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 {
@@ -264,6 +291,33 @@ import {
   }
   function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  // Product photo if there is one, otherwise the yarn-color swatch
+  function avatar(photo, color, big) {
+    if (photo && /^data:image\//.test(photo)) return `<img class="thumb${big ? " lg" : ""}" src="${esc(photo)}" alt="">`;
+    return `<span class="swatch${big ? " lg" : ""}" style="--sw:${esc(color || YARN[6])}"></span>`;
+  }
+  // Photos are shrunk and stored with the product in Firestore (no paid Storage plan needed)
+  async function shrinkPhoto(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      const s = Math.min(1, 640 / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+      let q = 0.8, out = c.toDataURL("image/jpeg", q);
+      while (out.length > 200000 && q > 0.45) { q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+      return out;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function downloadFile(text, name) {
+    // BOM + CRLF so Excel opens it with the right characters and rows
+    const blob = new Blob(["﻿" + text], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
 
   let toastTimer;
   function toast(msg) {
@@ -309,6 +363,18 @@ import {
     async deleteSale(id) {
       if (!fs) { local.sales = local.sales.filter((s) => s.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("sales", id)));
+    },
+    // Many records at once, in batches (Firestore allows 500 writes per batch)
+    async importAll(products, sales) {
+      if (!fs) { local.products.push(...products); local.sales.push(...sales); syncLocal(); return true; }
+      const ops = [...products.map((p) => ["products", p]), ...sales.map((s) => ["sales", s])];
+      let ok = true;
+      for (let i = 0; i < ops.length; i += 450) {
+        const b = writeBatch(fs);
+        for (const [col, { id, ...data }] of ops.slice(i, i + 450)) b.set(ref(col, id), data);
+        ok = write(() => b.commit()) && ok;
+      }
+      return ok;
     },
   };
   function syncLocal() {
@@ -399,7 +465,7 @@ import {
       const k = s.productId || s.productName;
       const cur = m.get(k) || { name: s.productName, units: 0, revenue: 0, color: s.color };
       cur.units += s.qty || 0; cur.revenue += s.total || 0;
-      const p = productById(s.productId); if (p) { cur.name = p.name; cur.color = p.color; }
+      const p = productById(s.productId); if (p) { cur.name = p.name; cur.color = p.color; cur.photo = p.photo; }
       m.set(k, cur);
     }
     return m;
@@ -483,7 +549,7 @@ import {
         <h2>Best sellers</h2>
         <div class="rows">
           ${top5.length ? top5.map((p) => `
-            <div class="row"><span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+            <div class="row">${avatar(p.photo, p.color)}
               <div class="main"><div class="title">${esc(p.name)}</div><div class="sub num">${fmt(p.revenue)} total</div></div>
               <div class="amt num">${p.units} sold</div></div>`).join("") : `<div class="empty">No sales yet.</div>`}
         </div>
@@ -495,7 +561,7 @@ import {
         <h2>Running low</h2>
         <div class="rows">
           ${low.length ? low.map((p) => `
-            <div class="row"><span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+            <div class="row">${avatar(p.photo, p.color)}
               <div class="main"><div class="title">${esc(p.name)}</div><div class="sub">${p.stock ? "Last one in stock" : "Sold out"}</div></div>
               <span class="chip low num">${p.stock || 0} left</span></div>`).join("") : `<div class="empty">${state.products.length ? "Everything has at least 2 in stock." : "Add your plushies on the Products tab to track stock."}</div>`}
         </div>
@@ -516,7 +582,7 @@ import {
     const name = p ? p.name : s.productName;
     const color = (p && p.color) || s.color || YARN[6];
     return `<div class="row salerow" data-sale="${esc(s.id)}" tabindex="0" role="button">
-      <span class="swatch" style="--sw:${esc(color)}"></span>
+      ${avatar(p && p.photo, color)}
       <div class="main"><div class="title">${esc(name)}${s.qty > 1 ? ` <span class="num">×${s.qty}</span>` : ""} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
       <div class="sub">${esc(dayLabel(s.date))} · ${esc(s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
       <div class="amt num">${fmt(s.total)}</div></div>`;
@@ -543,7 +609,7 @@ import {
         const stock = p.stock || 0;
         return `<article class="pcard">
           <div class="top">
-            <span class="swatch" style="--sw:${esc(p.color || YARN[6])}"></span>
+            ${avatar(p.photo, p.color, true)}
             <div class="main">
               <div class="name">${esc(p.name)}</div>
               <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
@@ -580,7 +646,10 @@ import {
           <select id="filter-product" aria-label="Show sales for" style="flex:1 1 200px">
             <option value="">All plushies</option>${opts}
           </select>
-          ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn ghost small" data-act="import" type="button">Import CSV</button>
+            ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
+          </div>
         </div>
         <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${list.length} sale${list.length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)} all time</div>
       </section>
@@ -599,7 +668,7 @@ import {
     const ov = document.getElementById("overlay");
     ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(); });
     onMount && onMount(root.querySelector(".sheet"));
-    const first = root.querySelector("input, select, textarea"); if (first && window.innerWidth > 640) first.focus();
+    const first = root.querySelector("input:not(.vh), select, textarea"); if (first && window.innerWidth > 640) first.focus();
   }
   function closeSheet() { document.getElementById("sheet-root").innerHTML = ""; }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
@@ -614,10 +683,18 @@ import {
   function productSheet(p) {
     const isNew = !p;
     p = p || { name: "", price: "", cost: "", stock: 0, hours: "", notes: "", color: YARN[Math.floor(Math.random() * 8)] };
-    let color = p.color;
+    let color = p.color, photo = p.photo || "";
     openSheet(`
       <h3>${isNew ? "Add a plushie" : "Edit plushie"}</h3>
       <form id="pform" class="fgrid" novalidate>
+        <div class="full photo-edit">
+          <div id="p-photo-box"></div>
+          <div class="opts">
+            <button class="btn ghost small" type="button" id="p-photo-btn"></button>
+            <button class="linkbtn" type="button" id="p-photo-rm">Remove photo</button>
+            <input class="vh" type="file" id="p-file" accept="image/*" tabindex="-1" aria-hidden="true">
+          </div>
+        </div>
         <label class="f full">Name<input id="p-name" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl"></label>
         <label class="f">Price<input id="p-price" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.price)}" placeholder="28.00"></label>
         <label class="f">In stock<input id="p-stock" inputmode="numeric" type="number" step="1" min="0" value="${esc(p.stock)}"></label>
@@ -632,6 +709,21 @@ import {
         ${isNew ? "" : `<button class="btn danger" id="p-del" type="button">Delete</button>`}
         <div class="right"><button class="btn ghost" type="button" id="p-cancel">Cancel</button><button class="btn" type="submit" form="pform" id="p-save">${isNew ? "Add plushie" : "Save"}</button></div>
       </div>`, (el) => {
+      const showPhoto = () => {
+        el.querySelector("#p-photo-box").innerHTML = photo ? `<img src="${esc(photo)}" alt="Photo of this plushie">` : `<div class="photo-empty">No photo yet</div>`;
+        el.querySelector("#p-photo-btn").textContent = photo ? "Change photo" : "Add photo";
+        el.querySelector("#p-photo-rm").hidden = !photo;
+      };
+      showPhoto();
+      el.querySelector("#p-photo-btn").addEventListener("click", () => el.querySelector("#p-file").click());
+      el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; showPhoto(); });
+      el.querySelector("#p-file").addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0]; e.target.value = "";
+        if (!f) return;
+        const btn = el.querySelector("#p-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
+        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG."); }
+        btn.disabled = false; showPhoto();
+      });
       el.querySelector("#p-colors").addEventListener("click", (e) => {
         const b = e.target.closest("button[data-c]"); if (!b) return;
         color = b.dataset.c;
@@ -652,6 +744,7 @@ import {
           color,
           createdAt: p.createdAt || Date.now(),
         };
+        if (photo) data.photo = photo;
         if (p.example) data.example = true;
         const ok = await api.saveProduct(p.id || uid(), data);
         if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
@@ -670,7 +763,8 @@ import {
     s = s || { productId: products[0].id, qty: 1, unitPrice: products[0].price || 0, date: todayStr(), channel: CHANNELS[0], note: "" };
     const originalQty = isNew ? 0 : s.qty || 0, originalProduct = isNew ? null : s.productId;
     const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === s.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} in stock)</option>`).join("");
-    const missing = !isNew && !productById(s.productId) ? `<option value="${esc(s.productId)}" selected>${esc(s.productName)} (deleted)</option>` : "";
+    const missing = !isNew && !productById(s.productId) ? `<option value="${esc(s.productId)}" selected>${esc(s.productName)} (not in Products)</option>` : "";
+    const channels = s.channel && !CHANNELS.includes(s.channel) ? [...CHANNELS, s.channel] : CHANNELS;
     openSheet(`
       <h3>${isNew ? "Record a sale" : "Edit sale"}</h3>
       <form id="sform" class="fgrid" novalidate>
@@ -678,7 +772,7 @@ import {
         <label class="f">How many<input id="s-qty" type="number" inputmode="numeric" min="1" step="1" value="${esc(s.qty)}"></label>
         <label class="f">Price each<input id="s-price" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(s.unitPrice)}"></label>
         <label class="f">Date<input id="s-date" type="date" value="${esc(s.date)}"></label>
-        <label class="f">Sold through<select id="s-channel">${CHANNELS.map((c) => `<option ${c === s.channel ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label class="f">Sold through<select id="s-channel">${channels.map((c) => `<option ${c === s.channel ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
         <label class="f full">Note<input id="s-note" value="${esc(s.note)}" placeholder="Buyer, event, discount…"></label>
       </form>
       <div class="total-line"><span class="label">Total</span><span class="v num" id="s-total">${fmt(s.total || s.qty * s.unitPrice)}</span></div>
@@ -734,18 +828,227 @@ import {
     toast("Examples removed");
   }
 
+  const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Note"];
+  const toCSV = (rows) => {
+    const q = (v) => { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    return rows.map((r) => r.map(q).join(",")).join("\r\n") + "\r\n";
+  };
   function downloadCSV() {
-    const q = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    const rows = [["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Note"]];
+    const rows = [CSV_HEAD];
     for (const s of state.sales) {
       const p = productById(s.productId);
       rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), (s.unitCost || 0).toFixed(2), s.channel, s.note]);
     }
-    const blob = new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = `plushie-sales-${todayStr()}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadFile(toCSV(rows), `plushie-sales-${todayStr()}.csv`);
+  }
+
+  // ---------- CSV import ----------
+  // Reads the same columns Download CSV writes, plus common variations, from files saved by Excel or Google Sheets.
+  const IMPORT_COLS = {
+    date: ["date", "day", "sale date", "sold on", "date sold"],
+    product: ["plushie", "product", "item", "name", "design", "plushie name", "product name"],
+    qty: ["quantity", "qty", "how many", "count", "units", "number sold", "#"],
+    unitPrice: ["price each", "unit price", "price", "each", "price per"],
+    total: ["total", "amount", "sale total", "revenue", "total price"],
+    unitCost: ["materials each", "materials", "materials cost", "material cost", "cost", "unit cost"],
+    channel: ["sold through", "channel", "where", "sold at", "venue", "source", "where sold"],
+    note: ["note", "notes", "comment", "comments", "buyer", "details"],
+  };
+
+  function decodeText(buf) {
+    // Excel's plain "CSV" is Windows-1252; "CSV UTF-8" and Google Sheets are UTF-8
+    let t;
+    try { t = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch (e) { t = new TextDecoder("windows-1252").decode(buf); }
+    return t.replace(/^﻿/, "");
+  }
+
+  function parseCSV(text) {
+    const firstLine = text.split(/\r?\n/, 1)[0];
+    const delim = [",", ";", "\t"].map((d) => [d, firstLine.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
+    const rows = []; let row = [], f = "", inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else inQ = false; } else f += c;
+      } else if (c === '"') inQ = true;
+      else if (c === delim) { row.push(f); f = ""; }
+      else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(f); rows.push(row); row = []; f = ""; }
+      else f += c;
+    }
+    if (f !== "" || row.length) { row.push(f); rows.push(row); }
+    return rows;
+  }
+
+  function parseDate(v) {
+    v = String(v || "").trim();
+    if (!v) return null;
+    let y, m, d, mt;
+    if ((mt = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
+    else if ((mt = v.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/))) {
+      // US order (month/day) unless the first number can only be a day
+      m = +mt[1]; d = +mt[2]; y = +mt[3];
+      if (m > 12 && d <= 12) [m, d] = [d, m];
+      if (y < 100) y += 2000;
+    } else if (/^\d{5}(\.\d+)?$/.test(v)) {
+      // Excel date serial number (days since 1899-12-30)
+      const x = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(v)) * 864e5);
+      y = x.getUTCFullYear(); m = x.getUTCMonth() + 1; d = x.getUTCDate();
+    } else {
+      // Written-out dates like "Mar 14, 2024" or "14 March 2024"
+      if (!/[a-z]{3}/i.test(v) || !/\b\d{4}\b/.test(v)) return null;
+      const x = new Date(v);
+      if (isNaN(x)) return null;
+      y = x.getFullYear(); m = x.getMonth() + 1; d = x.getDate();
+    }
+    const chk = new Date(y, m - 1, d);
+    if (y < 1990 || y > 2100 || chk.getMonth() !== m - 1 || chk.getDate() !== d) return null;
+    return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  }
+
+  function parseNum(v) {
+    let s = String(v ?? "").replace(/[$€£\s]/g, "");
+    if (!s) return null;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    s = /^-?\d+,\d{1,2}$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, "");
+    const n = Number(s);
+    return isNaN(n) ? NaN : neg ? -n : n;
+  }
+
+  function buildImport(text) {
+    const rows = parseCSV(text);
+    const headIdx = rows.findIndex((r) => r.some((v) => v.trim()));
+    if (headIdx < 0) return { error: "That file is empty." };
+    const norm = (h) => h.toLowerCase().replace(/[^a-z0-9# ]/g, " ").replace(/\s+/g, " ").trim();
+    const head = rows[headIdx].map(norm);
+    const col = {};
+    for (const [key, names] of Object.entries(IMPORT_COLS)) {
+      const i = head.findIndex((h) => names.includes(h));
+      if (i >= 0) col[key] = i;
+    }
+    if (col.date == null || col.product == null || (col.unitPrice == null && col.total == null)) {
+      return { error: "Couldn't find the columns. The first row needs headings like Date, Plushie, Quantity and Price each (or Total). Use “Blank template” to get the right layout." };
+    }
+    const get = (r, k) => (col[k] == null ? "" : String(r[col[k]] ?? "").trim());
+    const byName = new Map(state.products.map((p) => [(p.name || "").trim().toLowerCase(), p]));
+    // Count what's already in the ledger so importing the same file twice doesn't double up
+    const keyOf = (date, name, qty, total) => `${date}|${name.trim().toLowerCase()}|${qty}|${round2(total).toFixed(2)}`;
+    const existing = new Map();
+    for (const s of state.sales) {
+      const p = productById(s.productId);
+      const k = keyOf(s.date, p ? p.name : s.productName || "", s.qty, s.total);
+      existing.set(k, (existing.get(k) || 0) + 1);
+    }
+    const ok = [], issues = [], newNames = new Map();
+    let dups = 0;
+    rows.slice(headIdx + 1).forEach((r, i) => {
+      if (!r.some((v) => String(v).trim())) return;
+      const line = headIdx + i + 2;
+      const name = get(r, "product");
+      if (!name) return issues.push({ line, why: "no plushie name" });
+      const date = parseDate(get(r, "date"));
+      if (!date) return issues.push({ line, why: get(r, "date") ? `can't read the date “${get(r, "date")}”` : "no date" });
+      const rawQty = get(r, "qty"), q = rawQty ? parseNum(rawQty) : 1;
+      if (!Number.isInteger(q) || q < 1) return issues.push({ line, why: `can't read the quantity “${rawQty}”` });
+      let price = parseNum(get(r, "unitPrice")), total = parseNum(get(r, "total"));
+      if (Number.isNaN(price) || Number.isNaN(total)) return issues.push({ line, why: "can't read the price" });
+      if (price == null && total == null) return issues.push({ line, why: "no price or total" });
+      if (price == null) price = total / q;
+      if (total == null) total = q * price;
+      price = round2(price); total = round2(total);
+      const cost = parseNum(get(r, "unitCost"));
+      const rawCh = get(r, "channel");
+      const channel = CHANNELS.find((c) => c.toLowerCase() === rawCh.toLowerCase()) || rawCh || "Other";
+      const k = keyOf(date, name, q, total);
+      if (existing.get(k) > 0) { existing.set(k, existing.get(k) - 1); dups++; return; }
+      const lower = name.toLowerCase();
+      if (!byName.has(lower) && !newNames.has(lower)) newNames.set(lower, { name, price });
+      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, note: get(r, "note") });
+    });
+    ok.sort((a, b) => a.date.localeCompare(b.date));
+    return { ok, issues, dups, newNames: [...newNames.values()] };
+  }
+
+  function importSheet() {
+    openSheet(`
+      <h3>Import sales</h3>
+      <p class="hint">Choose a CSV file. From Excel, use <b>File → Save As → CSV</b>. The first row should have the headings <code>Date, Plushie, Quantity, Price each</code>. <code>Total, Sold through, Note</code> are optional. A file from “Download CSV” works as-is.</p>
+      <p class="hint">Imported sales don't change your current stock counts.</p>
+      <input class="vh" type="file" id="i-file" accept=".csv,text/csv,.txt,text/plain" tabindex="-1" aria-hidden="true">
+      <div class="actions">
+        <button class="btn ghost" type="button" id="i-template">Blank template</button>
+        <div class="right"><button class="btn ghost" type="button" id="i-cancel">Cancel</button><button class="btn" type="button" id="i-pick">Choose file</button></div>
+      </div>`, (el) => {
+      el.querySelector("#i-cancel").addEventListener("click", closeSheet);
+      el.querySelector("#i-template").addEventListener("click", () => downloadFile(toCSV([CSV_HEAD]), "plushie-sales-template.csv"));
+      el.querySelector("#i-pick").addEventListener("click", () => el.querySelector("#i-file").click());
+      el.querySelector("#i-file").addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0]; e.target.value = "";
+        if (!f) return;
+        if (/\.xlsx?$/i.test(f.name)) { toast("That's an Excel workbook. In Excel, use File → Save As → CSV, then import that file."); return; }
+        try {
+          const plan = buildImport(decodeText(await f.arrayBuffer()));
+          if (plan.error) { toast(plan.error); return; }
+          importPreview(plan, f.name);
+        } catch (ex) { console.error(ex); toast("Couldn't read that file."); }
+      });
+    });
+  }
+
+  function importPreview(plan, fileName) {
+    const { ok, issues, dups, newNames } = plan;
+    const sum = ok.reduce((n, s) => n + s.total, 0);
+    const range = ok.length ? (ok[0].date === ok[ok.length - 1].date ? dayLabel(ok[0].date) : `${dayLabel(ok[0].date)} – ${dayLabel(ok[ok.length - 1].date)}`) : "";
+    const span = ok.length && ok[0].date.slice(0, 4) !== ok[ok.length - 1].date.slice(0, 4)
+      ? `${ok[0].date.slice(0, 4)} – ${ok[ok.length - 1].date.slice(0, 4)}` : ok.length ? ok[0].date.slice(0, 4) : "";
+    const shown = ok.slice(0, 8);
+    openSheet(`
+      <h3>Import sales</h3>
+      <div class="imp-sum">${ok.length
+        ? `<b class="num">${ok.length} sale${ok.length === 1 ? "" : "s"}</b> ready to add · <span class="num">${fmt(sum)}</span><div class="sub" style="color:var(--muted);font-size:.85rem">${esc(range)}, ${esc(span)} · from ${esc(fileName)}</div>`
+        : `No new sales to add from ${esc(fileName)}.`}</div>
+      ${dups ? `<div class="imp-box info">${dups} sale${dups === 1 ? " is" : "s are"} already in the ledger and will be skipped.</div>` : ""}
+      ${issues.length ? `<div class="imp-box warn"><b>${issues.length} row${issues.length === 1 ? "" : "s"} can't be imported</b>
+        <ul>${issues.slice(0, 8).map((x) => `<li>Row ${x.line}: ${esc(x.why)}</li>`).join("")}${issues.length > 8 ? `<li>…and ${issues.length - 8} more</li>` : ""}</ul>
+        <div style="margin-top:6px">Fix those rows in the file and import it again. Sales already imported are skipped, so nothing gets doubled.</div></div>` : ""}
+      ${newNames.length && ok.length ? `<div class="imp-box info"><label><input type="checkbox" id="i-addnew" checked>
+        <span>Also add ${newNames.length} plushie${newNames.length === 1 ? "" : "s"} to Products (with 0 in stock): ${newNames.slice(0, 6).map((n) => esc(n.name)).join(", ")}${newNames.length > 6 ? `, and ${newNames.length - 6} more` : ""}</span></label></div>` : ""}
+      ${ok.length ? `<div class="imp-scroll"><table class="imp-table num">
+        <thead><tr><th>Date</th><th>Plushie</th><th class="r">Qty</th><th class="r">Total</th><th>Sold through</th></tr></thead>
+        <tbody>${shown.map((s) => `<tr><td>${esc(s.date)}</td><td>${esc(s.name)}</td><td class="r">${s.qty}</td><td class="r">${fmt(s.total)}</td><td>${esc(s.channel)}</td></tr>`).join("")}</tbody>
+      </table>${ok.length > shown.length ? `<div class="empty">…and ${ok.length - shown.length} more</div>` : ""}</div>` : ""}
+      <div class="actions">
+        <button class="btn ghost" type="button" id="i-back">Choose another file</button>
+        <div class="right"><button class="btn ghost" type="button" id="i-cancel">Cancel</button>
+        ${ok.length ? `<button class="btn" type="button" id="i-go">Import ${ok.length} sale${ok.length === 1 ? "" : "s"}</button>` : ""}</div>
+      </div>`, (el) => {
+      el.querySelector("#i-cancel").addEventListener("click", closeSheet);
+      el.querySelector("#i-back").addEventListener("click", importSheet);
+      const go = el.querySelector("#i-go");
+      if (go) go.addEventListener("click", async () => {
+        go.disabled = true;
+        const addNew = !!(el.querySelector("#i-addnew") && el.querySelector("#i-addnew").checked);
+        const now = Date.now();
+        const byName = new Map(state.products.map((p) => [(p.name || "").trim().toLowerCase(), p]));
+        const products = [];
+        if (addNew) newNames.forEach((n, i) => {
+          const p = { id: uid(), name: n.name, price: n.price, cost: 0, stock: 0, hours: 0, notes: "Added by import", color: YARN[i % 8], createdAt: now };
+          products.push(p); byName.set(n.name.toLowerCase(), p);
+        });
+        const sales = ok.map((s, i) => {
+          const p = byName.get(s.name.toLowerCase());
+          return {
+            id: uid(), productId: p ? p.id : "", productName: p ? p.name : s.name, color: p ? p.color || "" : "",
+            qty: s.qty, unitPrice: s.unitPrice, total: s.total, unitCost: s.unitCost ?? (p ? p.cost || 0 : 0),
+            date: s.date, channel: s.channel, note: s.note, createdAt: now + i, imported: true,
+          };
+        });
+        if (await api.importAll(products, sales)) {
+          closeSheet(); state.tab = "sales"; state.filterProduct = ""; render();
+          toast(`Imported ${sales.length} sale${sales.length === 1 ? "" : "s"}`);
+        } else go.disabled = false;
+      });
+    });
   }
 
   // ---------- Events ----------
@@ -761,6 +1064,7 @@ import {
     if (t.closest("[data-act='new-product']")) return productSheet();
     if (t.closest("[data-act='clear-examples']")) return clearExamples();
     if (t.closest("[data-act='csv']")) return downloadCSV();
+    if (t.closest("[data-act='import']")) return importSheet();
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
     const st = t.closest("[data-stock]");
     if (st) { const p = productById(st.dataset.stock); if (p) api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) + Number(st.dataset.d)) }); return; }
