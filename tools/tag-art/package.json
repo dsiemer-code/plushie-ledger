@@ -1,0 +1,7 @@
+{
+  "name": "tag-art",
+  "private": true,
+  "description": "Generates the printable tag SVGs in ../../tags",
+  "scripts": { "build": "node build.js" },
+  "dependencies": { "fontkit": "2.0.4" }
+}

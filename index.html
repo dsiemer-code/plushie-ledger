@@ -11,7 +11,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&family=Josefin+Sans:wght@300;400&family=Sacramento&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@500&display=swap">
 <style>
 /* Layout: phone-first ledger — sticky header with yarn-stitch tabs, one column of panels, floating "Record sale" button; widens to two columns on desktop */
 :root {
@@ -1504,9 +1504,8 @@ import {
     let root = document.getElementById("print-root");
     if (!root) { root = document.createElement("div"); root.id = "print-root"; document.body.appendChild(root); }
     root.replaceChildren(...pages);
-    await Promise.all([document.fonts.load("300 20px 'Josefin Sans'"), document.fonts.load("400 20px 'Josefin Sans'"),
-      document.fonts.load("20px Sacramento"), document.fonts.load("700 10px Figtree"), document.fonts.load("600 10px Figtree"),
-      document.fonts.load("400 10px Figtree")]).catch(() => {});
+    // The tag's fixed text is outlines; only the name and price use a font (Yu Gothic where installed, else Zen Kaku Gothic New)
+    await document.fonts.load("500 20px 'Zen Kaku Gothic New'", "$0123456789 Plushie").catch(() => {});
     await document.fonts.ready;
     window.addEventListener("afterprint", () => root.replaceChildren(), { once: true });
     window.print();
