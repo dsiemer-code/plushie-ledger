@@ -767,6 +767,7 @@ import {
     const channels = s.channel && !CHANNELS.includes(s.channel) ? [...CHANNELS, s.channel] : CHANNELS;
     openSheet(`
       <h3>${isNew ? "Record a sale" : "Edit sale"}</h3>
+      ${s.imported ? `<p class="hint">Imported past sale. Changing or deleting it won't affect current stock.</p>` : ""}
       <form id="sform" class="fgrid" novalidate>
         <label class="f full">Plushie<select id="s-product">${missing}${opts}</select></label>
         <label class="f">How many<input id="s-qty" type="number" inputmode="numeric" min="1" step="1" value="${esc(s.qty)}"></label>
@@ -798,11 +799,14 @@ import {
           createdAt: s.createdAt || Date.now(),
         };
         if (s.example) data.example = true;
+        if (s.imported) data.imported = true;
         $("#s-save").disabled = true;
         const ok = await api.saveSale(s.id || uid(), data);
         if (!ok) { $("#s-save").disabled = false; return; }
-        // Adjust stock: give back the old quantity, take the new one
-        if (originalProduct && originalProduct !== productId) {
+        // Adjust stock: give back the old quantity, take the new one.
+        // Imported past sales never touched current stock, so editing them doesn't either.
+        if (s.imported) { /* no stock change */ }
+        else if (originalProduct && originalProduct !== productId) {
           const op = productById(originalProduct); if (op) await api.patchProduct(op.id, { stock: (op.stock || 0) + originalQty });
           if (p) await api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) - qty) });
         } else if (p) {
@@ -814,8 +818,9 @@ import {
       });
       if (!isNew) armDelete($("#s-del"), "Delete", async () => {
         if (await api.deleteSale(s.id)) {
-          const p = productById(s.productId); if (p) await api.patchProduct(p.id, { stock: (p.stock || 0) + (s.qty || 0) });
-          closeSheet(); toast("Sale deleted and stock put back");
+          const p = !s.imported && productById(s.productId);
+          if (p) await api.patchProduct(p.id, { stock: (p.stock || 0) + (s.qty || 0) });
+          closeSheet(); toast(p ? "Sale deleted and stock put back" : "Sale deleted");
         }
       });
     });
