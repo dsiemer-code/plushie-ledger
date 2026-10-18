@@ -145,6 +145,8 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .chip.low { background: var(--warn-soft); color: var(--warn); }
 .chip.ex { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
 
+h2.sect { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; margin: 6px 2px -4px; }
+
 /* Products */
 .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 .toolbar .search { flex: 1 1 200px; }
@@ -225,6 +227,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
       <button role="tab" id="tab-overview" aria-selected="true" data-tab="overview">Overview</button>
       <button role="tab" id="tab-products" aria-selected="false" data-tab="products">Products</button>
       <button role="tab" id="tab-sales" aria-selected="false" data-tab="sales">Sales</button>
+      <button role="tab" id="tab-events" aria-selected="false" data-tab="events">Events</button>
     </nav>
   </div>
 </header>
@@ -266,10 +269,10 @@ import {
   const fmtShort = (n) => (Math.abs(n) >= 1000 ? money0.format(n) : money.format(n || 0));
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-  const state = { tab: "overview", products: [], sales: [], loaded: { p: false, s: false }, filterProduct: "", search: "", readOnly: false, offline: false };
+  const state = { tab: "overview", products: [], sales: [], events: [], loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
 
   // Local-only fallback when saving isn't available in this view
-  const local = { products: [], sales: [] };
+  const local = { products: [], sales: [], events: [] };
 
   function todayStr() {
     const d = new Date();
@@ -364,10 +367,18 @@ import {
       if (!fs) { local.sales = local.sales.filter((s) => s.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("sales", id)));
     },
+    async saveEvent(id, data) {
+      if (!fs) { const i = local.events.findIndex((x) => x.id === id); const rec = { id, ...data }; if (i >= 0) local.events[i] = rec; else local.events.push(rec); syncLocal(); return true; }
+      return write(() => setDoc(ref("events", id), data));
+    },
+    async deleteEvent(id) {
+      if (!fs) { local.events = local.events.filter((x) => x.id !== id); syncLocal(); return true; }
+      return write(() => deleteDoc(ref("events", id)));
+    },
     // Many records at once, in batches (Firestore allows 500 writes per batch)
-    async importAll(products, sales) {
-      if (!fs) { local.products.push(...products); local.sales.push(...sales); syncLocal(); return true; }
-      const ops = [...products.map((p) => ["products", p]), ...sales.map((s) => ["sales", s])];
+    async importAll(products, sales, events = []) {
+      if (!fs) { local.products.push(...products); local.sales.push(...sales); local.events.push(...events); syncLocal(); return true; }
+      const ops = [...products.map((p) => ["products", p]), ...events.map((x) => ["events", x]), ...sales.map((s) => ["sales", s])];
       let ok = true;
       for (let i = 0; i < ops.length; i += 450) {
         const b = writeBatch(fs);
@@ -380,6 +391,7 @@ import {
   function syncLocal() {
     state.products = local.products.slice();
     state.sales = local.sales.slice().sort(saleSort);
+    state.events = local.events.slice();
     render();
   }
   const saleSort = (a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0);
@@ -401,7 +413,7 @@ import {
   function connect() {
     if (!configured) {
       // Demo mode: nothing is saved until firebase-config.js is filled in.
-      state.offline = true; state.loaded = { p: true, s: true };
+      state.offline = true; state.loaded = { p: true, s: true, e: true };
       const m = (d) => { const x = new Date(); x.setDate(x.getDate() - d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
       local.products = [
         { id: "ex1", name: "Sleepy Axolotl", price: 28, cost: 6.5, stock: 4, hours: 3, color: YARN[0], notes: "Example entry", example: true },
@@ -410,6 +422,11 @@ import {
       ];
       const ex = (id, pid, qty, price, d, ch) => { const p = local.products.find((x) => x.id === pid); return { id, productId: pid, productName: p.name, color: p.color, qty, unitPrice: price, total: qty * price, unitCost: p.cost, date: m(d), channel: ch, note: "", createdAt: Date.now() - d * 864e5, example: true }; };
       local.sales = [ex("s1", "ex1", 1, 28, 2, "Craft fair"), ex("s2", "ex3", 3, 15, 2, "Craft fair"), ex("s3", "ex2", 1, 22, 9, "Etsy"), ex("s4", "ex1", 2, 28, 38, "Instagram"), ex("s5", "ex2", 1, 22, 70, "Custom order")];
+      local.events = [
+        { id: "ev1", name: "Harvest Craft Fair", start: m(2), end: m(2), location: "Town Hall", fee: 25, notes: "Example entry", createdAt: Date.now() - 30 * 864e5, example: true },
+        { id: "ev2", name: "Holiday Makers Market", start: m(-21), end: m(-20), location: "Fairgrounds, Hall B", fee: 60, notes: "Example entry", createdAt: Date.now() - 20 * 864e5, example: true },
+      ];
+      for (const s of local.sales.slice(0, 2)) { s.eventId = "ev1"; s.eventName = "Harvest Craft Fair"; }
       setSync("Demo mode");
       showApp(true); syncLocal();
       return;
@@ -421,7 +438,7 @@ import {
 
     onAuthStateChanged(auth, (user) => {
       unsubs.forEach((u) => u()); unsubs = [];
-      state.products = []; state.sales = []; state.loaded = { p: false, s: false };
+      state.products = []; state.sales = []; state.events = []; state.loaded = { p: false, s: false, e: false };
       if (!user) { uidPath = null; setSync(""); showApp(false); return; }
       uidPath = user.uid;
       showApp(true); render();
@@ -433,6 +450,10 @@ import {
       unsubs.push(onSnapshot(query(collection(fs, "users", uidPath, "sales"), orderBy("date", "desc"), limit(2000)), { includeMetadataChanges: true }, (snap) => {
         state.sales = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(saleSort);
         state.loaded.s = true; setSync(syncLabel(snap)); render();
+      }, onErr));
+      unsubs.push(onSnapshot(collection(fs, "users", uidPath, "events"), { includeMetadataChanges: true }, (snap) => {
+        state.events = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.loaded.e = true; setSync(syncLabel(snap)); render();
       }, onErr));
     });
 
@@ -454,6 +475,28 @@ import {
 
   // ---------- Derived ----------
   function productById(id) { return state.products.find((p) => p.id === id); }
+  function eventById(id) { return id ? state.events.find((x) => x.id === id) : undefined; }
+  const evEnd = (ev) => (ev.end && ev.end >= ev.start ? ev.end : ev.start);
+  const evStatus = (ev, today = todayStr()) => (ev.start > today ? "upcoming" : evEnd(ev) < today ? "past" : "now");
+  function evDates(ev) {
+    const yr = ev.start.slice(0, 4) !== todayStr().slice(0, 4) ? ", " + ev.start.slice(0, 4) : "";
+    return dayLabel(ev.start) + (evEnd(ev) !== ev.start ? " – " + dayLabel(evEnd(ev)) : "") + yr;
+  }
+  function eventTotals(ev) {
+    let revenue = 0, units = 0, cost = 0, orders = 0;
+    for (const s of state.sales) if (s.eventId === ev.id) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders++; }
+    return { revenue: round2(revenue), units, orders, profit: round2(revenue - cost - (ev.fee || 0)) };
+  }
+  // Happening now first, then coming up (soonest first), then past (most recent first)
+  function eventsInPickOrder() {
+    const today = todayStr(), by = { now: [], upcoming: [], past: [] };
+    for (const ev of state.events) by[evStatus(ev, today)].push(ev);
+    by.now.sort((a, b) => a.start.localeCompare(b.start));
+    by.upcoming.sort((a, b) => a.start.localeCompare(b.start));
+    by.past.sort((a, b) => b.start.localeCompare(a.start));
+    return by;
+  }
+  const saleEventName = (s) => { const ev = eventById(s.eventId); return ev ? ev.name : s.eventName || ""; };
   function monthTotals(key) {
     let revenue = 0, units = 0, cost = 0, orders = 0;
     for (const s of state.sales) if (monthKey(s.date) === key) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders++; }
@@ -470,7 +513,7 @@ import {
     }
     return m;
   }
-  const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example);
+  const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example) || state.events.some((x) => x.example);
 
   // ---------- Render ----------
   function render() {
@@ -479,9 +522,10 @@ import {
     const active = document.activeElement && document.activeElement.id;
     const caret = active === "q" ? document.activeElement.selectionStart : null;
     let html = banners();
-    if (!(state.loaded.p && state.loaded.s)) html += `<div class="panel"><div class="empty">Loading your shop…</div></div>`;
+    if (!(state.loaded.p && state.loaded.s && state.loaded.e)) html += `<div class="panel"><div class="empty">Loading your shop…</div></div>`;
     else if (state.tab === "overview") html += overviewHTML();
     else if (state.tab === "products") html += productsHTML();
+    else if (state.tab === "events") html += eventsHTML();
     else html += salesHTML();
     v.innerHTML = html;
     if (active === "q") { const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
@@ -574,7 +618,20 @@ import {
         <div class="rows">${recent.length ? recent.map(saleRow).join("") : `<div class="empty">Tap “Record sale” after you sell a plushie.</div>`}</div>
       </section>`;
 
-    return stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+    // At a show: running totals for it, right at the top
+    const nowPanels = eventsInPickOrder().now.map((ev) => {
+      const t = eventTotals(ev);
+      return `<section class="panel">
+        <div class="month-head"><h2>Today at ${esc(ev.name)}</h2><button class="linkbtn" data-event-sales="${esc(ev.id)}">See sales</button></div>
+        <div class="stats num">
+          <div class="stat"><div class="label">Sales</div><div class="v">${fmtShort(t.revenue)}</div><span class="d">${t.orders} sale${t.orders === 1 ? "" : "s"}</span></div>
+          <div class="stat"><div class="label">Plushies sold</div><div class="v">${t.units}</div></div>
+          <div class="stat"><div class="label">After costs</div><div class="v">${fmtShort(t.profit)}</div><span class="d">yarn${ev.fee ? " & booth fee" : ""}</span></div>
+        </div>
+      </section>`;
+    }).join("");
+
+    return nowPanels + stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
   function saleRow(s) {
@@ -584,7 +641,7 @@ import {
     return `<div class="row salerow" data-sale="${esc(s.id)}" tabindex="0" role="button">
       ${avatar(p && p.photo, color)}
       <div class="main"><div class="title">${esc(name)}${s.qty > 1 ? ` <span class="num">×${s.qty}</span>` : ""} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
-      <div class="sub">${esc(dayLabel(s.date))} · ${esc(s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
+      <div class="sub">${esc(dayLabel(s.date))} · ${esc(saleEventName(s) || s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
       <div class="amt num">${fmt(s.total)}</div></div>`;
   }
 
@@ -632,32 +689,72 @@ import {
     `;
   }
 
+  function eventsHTML() {
+    const by = eventsInPickOrder();
+    const card = (ev) => {
+      const t = eventTotals(ev), st = evStatus(ev);
+      return `<article class="pcard">
+        <div class="top">
+          <div class="main">
+            <div class="name">${esc(ev.name)}</div>
+            <div class="meta">${esc(evDates(ev))}${ev.location ? ` · ${esc(ev.location)}` : ""}</div>
+            ${ev.fee ? `<div class="meta num">Booth fee ${fmt(ev.fee)}</div>` : ""}
+            ${ev.notes ? `<div class="meta">${esc(ev.notes)}</div>` : ""}
+          </div>
+          <button class="linkbtn" data-edit-event="${esc(ev.id)}" aria-label="Edit ${esc(ev.name)}">Edit</button>
+        </div>
+        <div class="bottom">
+          <div class="num">${ev.example ? '<span class="chip ex">Example</span> ' : ""}${st === "now" ? '<span class="chip">Today</span> ' : ""}
+            ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after yarn${ev.fee ? " & booth fee" : ""}</div>`
+              : `<span class="label">${st === "upcoming" ? "Coming up" : "No sales"}</span>`}
+          </div>
+          ${t.orders ? `<button class="linkbtn" data-event-sales="${esc(ev.id)}">See sales</button>` : ""}
+        </div>
+      </article>`;
+    };
+    const group = (title, list) => (list.length ? `<h2 class="sect">${title}</h2><div class="cards">${list.map(card).join("")}</div>` : "");
+    return `
+      <section class="panel">
+        <div class="toolbar">
+          <div class="sub" style="color:var(--muted);font-size:.9rem;flex:1 1 200px">Craft shows and markets. Sales recorded at a show add up here.</div>
+          <button class="btn" data-act="new-event" type="button">Add event</button>
+        </div>
+      </section>
+      ${state.events.length ? group("Happening now", by.now) + group("Coming up", by.upcoming) + group("Past events", by.past)
+        : `<section class="panel"><div class="empty">No events yet. Add a craft show before you go, or create one when you record your first sale there.</div></section>`}`;
+  }
+
   function salesHTML() {
-    const fp = state.filterProduct;
-    const list = state.sales.filter((s) => !fp || s.productId === fp);
+    const fp = state.filterProduct, fe = state.filterEvent;
+    const list = state.sales.filter((s) => (!fp || s.productId === fp) && (!fe || s.eventId === fe));
     const groups = new Map();
     for (const s of list) { const k = monthKey(s.date); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
     const opts = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""))
       .map((p) => `<option value="${esc(p.id)}" ${p.id === fp ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    const evOpts = state.events.slice().sort((a, b) => b.start.localeCompare(a.start))
+      .map((ev) => `<option value="${esc(ev.id)}" ${ev.id === fe ? "selected" : ""}>${esc(ev.name)}</option>`).join("");
     const allRev = list.reduce((n, s) => n + (s.total || 0), 0), allUnits = list.reduce((n, s) => n + (s.qty || 0), 0);
     return `
       <section class="panel">
         <div class="toolbar">
-          <select id="filter-product" aria-label="Show sales for" style="flex:1 1 200px">
+          <select id="filter-product" aria-label="Show sales for plushie" style="flex:1 1 160px">
             <option value="">All plushies</option>${opts}
           </select>
+          ${state.events.length ? `<select id="filter-event" aria-label="Show sales at event" style="flex:1 1 160px">
+            <option value="">All events</option>${evOpts}
+          </select>` : ""}
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn ghost small" data-act="import" type="button">Import CSV</button>
             ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
           </div>
         </div>
-        <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${list.length} sale${list.length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)} all time</div>
+        <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${list.length} sale${list.length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)}${fe ? "" : " all time"}</div>
       </section>
       <section class="panel">
         ${groups.size ? [...groups.entries()].map(([k, arr]) => {
           const tot = arr.reduce((n, s) => n + (s.total || 0), 0), u = arr.reduce((n, s) => n + (s.qty || 0), 0);
           return `<div class="monthgroup"><h4><span>${esc(monthLabel(k))}</span><span class="num">${u} sold · ${fmt(tot)}</span></h4><div class="rows">${arr.map(saleRow).join("")}</div></div>`;
-        }).join("") : `<div class="empty">${fp ? "No sales for this plushie yet." : "No sales yet. Tap “Record sale” after each sale and your history builds up here, month by month."}</div>`}
+        }).join("") : `<div class="empty">${fp || fe ? "No sales match these filters." : "No sales yet. Tap “Record sale” after each sale and your history builds up here, month by month."}</div>`}
       </section>`;
   }
 
@@ -755,12 +852,59 @@ import {
     });
   }
 
+  function eventSheet(ev) {
+    const isNew = !ev;
+    ev = ev || { name: "", start: todayStr(), end: "", location: "", fee: "", notes: "" };
+    openSheet(`
+      <h3>${isNew ? "Add an event" : "Edit event"}</h3>
+      <form id="eform" class="fgrid" novalidate>
+        <label class="f full">Name<input id="e-name" required value="${esc(ev.name)}" placeholder="e.g. Holiday Craft Fair"></label>
+        <label class="f">First day<input id="e-start" type="date" value="${esc(ev.start)}"></label>
+        <label class="f">Last day<input id="e-end" type="date" value="${esc(ev.end && ev.end !== ev.start ? ev.end : "")}" aria-describedby="e-end-hint"></label>
+        <div class="full sub" id="e-end-hint" style="color:var(--muted);font-size:.8rem;margin-top:-6px">Leave “Last day” empty for a one-day event.</div>
+        <label class="f full">Location<input id="e-loc" value="${esc(ev.location)}" placeholder="Venue or address"></label>
+        <label class="f">Booth fee<input id="e-fee" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(ev.fee)}" placeholder="0.00"></label>
+        <label class="f full">Notes<textarea id="e-notes" placeholder="Booth number, setup time, contact">${esc(ev.notes)}</textarea></label>
+      </form>
+      <div class="actions">
+        ${isNew ? "" : `<button class="btn danger" id="e-del" type="button">Delete</button>`}
+        <div class="right"><button class="btn ghost" type="button" id="e-cancel">Cancel</button><button class="btn" type="submit" form="eform">${isNew ? "Add event" : "Save"}</button></div>
+      </div>`, (el) => {
+      const $ = (id) => el.querySelector(id);
+      $("#e-cancel").addEventListener("click", closeSheet);
+      $("#eform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const name = $("#e-name").value.trim();
+        if (!name) { $("#e-name").focus(); toast("Give the event a name."); return; }
+        let start = $("#e-start").value || todayStr(), end = $("#e-end").value || start;
+        if (end < start) [start, end] = [end, start];
+        const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
+        if (ev.example) data.example = true;
+        if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved"); }
+      });
+      if (!isNew) armDelete($("#e-del"), "Delete", async () => {
+        if (await api.deleteEvent(ev.id)) { closeSheet(); toast("Event deleted. Its sales stay in your history."); }
+      });
+    });
+  }
+
   function saleSheet(s) {
     const isNew = !s;
     if (!isNew && !s.id) return;
     if (isNew && !state.products.length) { state.tab = "products"; render(); toast("Add a plushie first, then record its sales."); productSheet(); return; }
     const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    s = s || { productId: products[0].id, qty: 1, unitPrice: products[0].price || 0, date: todayStr(), channel: CHANNELS[0], note: "" };
+    // A new sale starts at today's event if one is on, otherwise the event of the last sale she recorded
+    const by = eventsInPickOrder();
+    const last = state.sales.filter((x) => !x.imported).reduce((a, b) => ((b.createdAt || 0) > ((a && a.createdAt) || 0) ? b : a), null);
+    if (isNew) {
+      const evId = by.now.length ? by.now[0].id : last && eventById(last.eventId) ? last.eventId : "";
+      s = { productId: products[0].id, qty: 1, unitPrice: products[0].price || 0, date: todayStr(), eventId: evId,
+        channel: evId ? "Craft fair" : (last && last.channel) || CHANNELS[0], note: "" };
+    }
+    const evOpt = (ev) => `<option value="${esc(ev.id)}" ${ev.id === s.eventId ? "selected" : ""}>${esc(ev.name)} · ${esc(evDates(ev))}</option>`;
+    const evGroup = (label, list) => (list.length ? `<optgroup label="${label}">${list.map(evOpt).join("")}</optgroup>` : "");
+    const evMissing = s.eventId && !eventById(s.eventId) ? `<option value="${esc(s.eventId)}" selected>${esc(s.eventName || "Deleted event")} (deleted)</option>` : "";
+    const evSelect = `<option value="">No event</option>${evMissing}${evGroup("Today", by.now)}${evGroup("Coming up", by.upcoming)}${evGroup("Past", by.past.slice(0, 25))}<option value="__new">+ New event…</option>`;
     const originalQty = isNew ? 0 : s.qty || 0, originalProduct = isNew ? null : s.productId;
     const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === s.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} in stock)</option>`).join("");
     const missing = !isNew && !productById(s.productId) ? `<option value="${esc(s.productId)}" selected>${esc(s.productName)} (not in Products)</option>` : "";
@@ -774,7 +918,9 @@ import {
         <label class="f">Price each<input id="s-price" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(s.unitPrice)}"></label>
         <label class="f">Date<input id="s-date" type="date" value="${esc(s.date)}"></label>
         <label class="f">Sold through<select id="s-channel">${channels.map((c) => `<option ${c === s.channel ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
-        <label class="f full">Note<input id="s-note" value="${esc(s.note)}" placeholder="Buyer, event, discount…"></label>
+        <label class="f full">Event<select id="s-event">${evSelect}</select></label>
+        <label class="f full" id="s-newev-wrap" hidden>New event name<input id="s-newev" placeholder="e.g. Holiday Craft Fair"></label>
+        <label class="f full">Note<input id="s-note" value="${esc(s.note)}" placeholder="Buyer, discount…"></label>
       </form>
       <div class="total-line"><span class="label">Total</span><span class="v num" id="s-total">${fmt(s.total || s.qty * s.unitPrice)}</span></div>
       <div class="actions">
@@ -785,6 +931,14 @@ import {
       const upd = () => { $("#s-total").textContent = fmt(round2((parseInt($("#s-qty").value, 10) || 0) * (Number($("#s-price").value) || 0))); };
       $("#s-product").addEventListener("change", () => { const p = productById($("#s-product").value); if (p) $("#s-price").value = p.price || 0; upd(); });
       $("#s-qty").addEventListener("input", upd); $("#s-price").addEventListener("input", upd);
+      $("#s-event").addEventListener("change", () => {
+        const v = $("#s-event").value, ev = eventById(v);
+        $("#s-newev-wrap").hidden = v !== "__new";
+        if (v === "__new") $("#s-newev").focus();
+        if (v) $("#s-channel").value = "Craft fair";
+        // Picking an event on other days moves the sale date into it
+        if (ev) { const d = $("#s-date").value; if (!d || d < ev.start || d > evEnd(ev)) $("#s-date").value = todayStr() >= ev.start && todayStr() <= evEnd(ev) ? todayStr() : ev.start; }
+      });
       $("#s-cancel").addEventListener("click", closeSheet);
       $("#sform").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -792,10 +946,20 @@ import {
         if (!qty || qty < 1) { $("#s-qty").focus(); toast("Enter how many were sold."); return; }
         const productId = $("#s-product").value, p = productById(productId);
         const unitPrice = round2($("#s-price").value);
+        const date = $("#s-date").value || todayStr();
+        let eventId = $("#s-event").value, eventName = "";
+        if (eventId === "__new") {
+          const name = $("#s-newev").value.trim();
+          if (!name) { $("#s-newev").focus(); toast("Give the new event a name."); return; }
+          eventId = uid(); eventName = name;
+          if (!(await api.saveEvent(eventId, { name, start: date, end: date, location: "", fee: 0, notes: "", createdAt: Date.now() }))) return;
+        } else if (eventId) {
+          eventName = (eventById(eventId) || {}).name || s.eventName || "";
+        }
         const data = {
           productId, productName: p ? p.name : s.productName, color: p ? p.color : s.color || "",
           qty, unitPrice, total: round2(qty * unitPrice), unitCost: p ? p.cost || 0 : s.unitCost || 0,
-          date: $("#s-date").value || todayStr(), channel: $("#s-channel").value, note: $("#s-note").value.trim(),
+          date, channel: $("#s-channel").value, eventId, eventName, note: $("#s-note").value.trim(),
           createdAt: s.createdAt || Date.now(),
         };
         if (s.example) data.example = true;
@@ -830,10 +994,11 @@ import {
     const btn = document.getElementById("clear-ex"); if (btn) btn.disabled = true;
     for (const s of state.sales.filter((x) => x.example)) await api.deleteSale(s.id);
     for (const p of state.products.filter((x) => x.example)) await api.deleteProduct(p.id);
+    for (const ev of state.events.filter((x) => x.example)) await api.deleteEvent(ev.id);
     toast("Examples removed");
   }
 
-  const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Note"];
+  const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Event", "Note"];
   const toCSV = (rows) => {
     const q = (v) => { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     return rows.map((r) => r.map(q).join(",")).join("\r\n") + "\r\n";
@@ -842,7 +1007,7 @@ import {
     const rows = [CSV_HEAD];
     for (const s of state.sales) {
       const p = productById(s.productId);
-      rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), (s.unitCost || 0).toFixed(2), s.channel, s.note]);
+      rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), (s.unitCost || 0).toFixed(2), s.channel, saleEventName(s), s.note]);
     }
     downloadFile(toCSV(rows), `plushie-sales-${todayStr()}.csv`);
   }
@@ -856,7 +1021,8 @@ import {
     unitPrice: ["price each", "unit price", "price", "each", "price per"],
     total: ["total", "amount", "sale total", "revenue", "total price"],
     unitCost: ["materials each", "materials", "materials cost", "material cost", "cost", "unit cost"],
-    channel: ["sold through", "channel", "where", "sold at", "venue", "source", "where sold"],
+    channel: ["sold through", "channel", "source", "sold via"],
+    event: ["event", "show", "craft show", "event name", "show name", "fair", "market", "location", "venue", "where", "sold at", "where sold"],
     note: ["note", "notes", "comment", "comments", "buyer", "details"],
   };
 
@@ -944,7 +1110,8 @@ import {
       const k = keyOf(s.date, p ? p.name : s.productName || "", s.qty, s.total);
       existing.set(k, (existing.get(k) || 0) + 1);
     }
-    const ok = [], issues = [], newNames = new Map();
+    const evByName = new Map(state.events.map((x) => [(x.name || "").trim().toLowerCase(), x]));
+    const ok = [], issues = [], newNames = new Map(), newEvents = new Map();
     let dups = 0;
     rows.slice(headIdx + 1).forEach((r, i) => {
       if (!r.some((v) => String(v).trim())) return;
@@ -962,22 +1129,30 @@ import {
       if (total == null) total = q * price;
       price = round2(price); total = round2(total);
       const cost = parseNum(get(r, "unitCost"));
-      const rawCh = get(r, "channel");
-      const channel = CHANNELS.find((c) => c.toLowerCase() === rawCh.toLowerCase()) || rawCh || "Other";
+      const rawCh = get(r, "channel"), event = get(r, "event");
+      const channel = CHANNELS.find((c) => c.toLowerCase() === rawCh.toLowerCase()) || rawCh || (event ? "Craft fair" : "Other");
       const k = keyOf(date, name, q, total);
       if (existing.get(k) > 0) { existing.set(k, existing.get(k) - 1); dups++; return; }
       const lower = name.toLowerCase();
       if (!byName.has(lower) && !newNames.has(lower)) newNames.set(lower, { name, price });
-      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, note: get(r, "note") });
+      const evLower = event.toLowerCase();
+      if (event && !evByName.has(evLower)) {
+        // New event spans the dates of its sales in the file
+        const ne = newEvents.get(evLower) || { name: event, start: date, end: date };
+        if (date < ne.start) ne.start = date;
+        if (date > ne.end) ne.end = date;
+        newEvents.set(evLower, ne);
+      }
+      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, event, note: get(r, "note") });
     });
     ok.sort((a, b) => a.date.localeCompare(b.date));
-    return { ok, issues, dups, newNames: [...newNames.values()] };
+    return { ok, issues, dups, newNames: [...newNames.values()], newEvents: [...newEvents.values()] };
   }
 
   function importSheet() {
     openSheet(`
       <h3>Import sales</h3>
-      <p class="hint">Choose a CSV file. From Excel, use <b>File → Save As → CSV</b>. The first row should have the headings <code>Date, Plushie, Quantity, Price each</code>. <code>Total, Sold through, Note</code> are optional. A file from “Download CSV” works as-is.</p>
+      <p class="hint">Choose a CSV file. From Excel, use <b>File → Save As → CSV</b>. The first row should have the headings <code>Date, Plushie, Quantity, Price each</code>. <code>Total, Sold through, Event, Note</code> are optional. A file from “Download CSV” works as-is.</p>
       <p class="hint">Imported sales don't change your current stock counts.</p>
       <input class="vh" type="file" id="i-file" accept=".csv,text/csv,.txt,text/plain" tabindex="-1" aria-hidden="true">
       <div class="actions">
@@ -1001,7 +1176,7 @@ import {
   }
 
   function importPreview(plan, fileName) {
-    const { ok, issues, dups, newNames } = plan;
+    const { ok, issues, dups, newNames, newEvents } = plan;
     const sum = ok.reduce((n, s) => n + s.total, 0);
     const range = ok.length ? (ok[0].date === ok[ok.length - 1].date ? dayLabel(ok[0].date) : `${dayLabel(ok[0].date)} – ${dayLabel(ok[ok.length - 1].date)}`) : "";
     const span = ok.length && ok[0].date.slice(0, 4) !== ok[ok.length - 1].date.slice(0, 4)
@@ -1018,9 +1193,11 @@ import {
         <div style="margin-top:6px">Fix those rows in the file and import it again. Sales already imported are skipped, so nothing gets doubled.</div></div>` : ""}
       ${newNames.length && ok.length ? `<div class="imp-box info"><label><input type="checkbox" id="i-addnew" checked>
         <span>Also add ${newNames.length} plushie${newNames.length === 1 ? "" : "s"} to Products (with 0 in stock): ${newNames.slice(0, 6).map((n) => esc(n.name)).join(", ")}${newNames.length > 6 ? `, and ${newNames.length - 6} more` : ""}</span></label></div>` : ""}
+      ${newEvents.length && ok.length ? `<div class="imp-box info"><label><input type="checkbox" id="i-addev" checked>
+        <span>Also add ${newEvents.length} event${newEvents.length === 1 ? "" : "s"} to Events: ${newEvents.slice(0, 6).map((n) => esc(n.name)).join(", ")}${newEvents.length > 6 ? `, and ${newEvents.length - 6} more` : ""}</span></label></div>` : ""}
       ${ok.length ? `<div class="imp-scroll"><table class="imp-table num">
-        <thead><tr><th>Date</th><th>Plushie</th><th class="r">Qty</th><th class="r">Total</th><th>Sold through</th></tr></thead>
-        <tbody>${shown.map((s) => `<tr><td>${esc(s.date)}</td><td>${esc(s.name)}</td><td class="r">${s.qty}</td><td class="r">${fmt(s.total)}</td><td>${esc(s.channel)}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Date</th><th>Plushie</th><th class="r">Qty</th><th class="r">Total</th><th>Where</th></tr></thead>
+        <tbody>${shown.map((s) => `<tr><td>${esc(s.date)}</td><td>${esc(s.name)}</td><td class="r">${s.qty}</td><td class="r">${fmt(s.total)}</td><td>${esc(s.event || s.channel)}</td></tr>`).join("")}</tbody>
       </table>${ok.length > shown.length ? `<div class="empty">…and ${ok.length - shown.length} more</div>` : ""}</div>` : ""}
       <div class="actions">
         <button class="btn ghost" type="button" id="i-back">Choose another file</button>
@@ -1040,16 +1217,23 @@ import {
           const p = { id: uid(), name: n.name, price: n.price, cost: 0, stock: 0, hours: 0, notes: "Added by import", color: YARN[i % 8], createdAt: now };
           products.push(p); byName.set(n.name.toLowerCase(), p);
         });
+        const evByName = new Map(state.events.map((x) => [(x.name || "").trim().toLowerCase(), x]));
+        const events = [];
+        if (el.querySelector("#i-addev") && el.querySelector("#i-addev").checked) newEvents.forEach((n) => {
+          const ev = { id: uid(), name: n.name, start: n.start, end: n.end, location: "", fee: 0, notes: "Added by import", createdAt: now };
+          events.push(ev); evByName.set(n.name.toLowerCase(), ev);
+        });
         const sales = ok.map((s, i) => {
-          const p = byName.get(s.name.toLowerCase());
+          const p = byName.get(s.name.toLowerCase()), ev = s.event ? evByName.get(s.event.toLowerCase()) : null;
           return {
             id: uid(), productId: p ? p.id : "", productName: p ? p.name : s.name, color: p ? p.color || "" : "",
             qty: s.qty, unitPrice: s.unitPrice, total: s.total, unitCost: s.unitCost ?? (p ? p.cost || 0 : 0),
-            date: s.date, channel: s.channel, note: s.note, createdAt: now + i, imported: true,
+            date: s.date, channel: s.channel, eventId: ev ? ev.id : "", eventName: ev ? ev.name : s.event,
+            note: s.note, createdAt: now + i, imported: true,
           };
         });
-        if (await api.importAll(products, sales)) {
-          closeSheet(); state.tab = "sales"; state.filterProduct = ""; render();
+        if (await api.importAll(products, sales, events)) {
+          closeSheet(); state.tab = "sales"; state.filterProduct = ""; state.filterEvent = ""; render();
           toast(`Imported ${sales.length} sale${sales.length === 1 ? "" : "s"}`);
         } else go.disabled = false;
       });
@@ -1070,6 +1254,10 @@ import {
     if (t.closest("[data-act='clear-examples']")) return clearExamples();
     if (t.closest("[data-act='csv']")) return downloadCSV();
     if (t.closest("[data-act='import']")) return importSheet();
+    if (t.closest("[data-act='new-event']")) return eventSheet();
+    const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
+    const es = t.closest("[data-event-sales]");
+    if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
     const st = t.closest("[data-stock]");
     if (st) { const p = productById(st.dataset.stock); if (p) api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) + Number(st.dataset.d)) }); return; }
@@ -1080,7 +1268,10 @@ import {
     if (e.key === "Enter" && e.target.matches("[data-sale]")) e.target.click();
   });
   view.addEventListener("input", (e) => { if (e.target.id === "q") { state.search = e.target.value; render(); } });
-  view.addEventListener("change", (e) => { if (e.target.id === "filter-product") { state.filterProduct = e.target.value; render(); } });
+  view.addEventListener("change", (e) => {
+    if (e.target.id === "filter-product") { state.filterProduct = e.target.value; render(); }
+    if (e.target.id === "filter-event") { state.filterEvent = e.target.value; render(); }
+  });
 
   render();
   connect();

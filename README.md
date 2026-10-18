@@ -44,19 +44,25 @@ Open the GitHub Pages link on her phone and sign in.
 ## What's stored
 ```
 users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, photo, notes
-users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, date, where it sold, note
+users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, date, where it sold, event, note
+users/{her-account-id}/events/{id}     name, first/last day, location, booth fee, notes
 ```
 Recording a sale lowers that plushie's stock; editing or deleting a sale puts the stock back.
 
 **Product photos** are shrunk to about 640 px and stored with the product in Firestore, so they need no paid Firebase Storage plan and work offline.
 
+## Events (craft shows)
+The **Events** tab holds craft shows and markets: name, dates, location and booth fee. Each one shows its sales, plushies sold, and profit after materials and the booth fee.
+
+When recording a sale, the **Event** box starts on the show happening today. With no show today, it starts on the event of the last sale she recorded. **+ New event…** creates a show right from the sale screen. While a show is on, the Overview tab shows its running totals at the top.
+
 ## Importing old sales
-Sales tab → **Import CSV**. From Excel, use **File → Save As → CSV**. The first row needs headings: `Date, Plushie, Quantity, Price each` (or `Total`). `Sold through`, `Note` and `Materials each` are optional. **Blank template** downloads an empty file with the right headings, and a file from **Download CSV** imports as-is.
+Sales tab → **Import CSV**. From Excel, use **File → Save As → CSV**. The first row needs headings: `Date, Plushie, Quantity, Price each` (or `Total`). `Sold through`, `Event`, `Note` and `Materials each` are optional. **Blank template** downloads an empty file with the right headings, and a file from **Download CSV** imports as-is.
 
 - Dates can be `2024-03-14`, `3/14/2024`, `3/14/24`, `Mar 14, 2024`, or Excel date numbers.
 - A preview shows what will be added and lists rows it can't read, by row number.
 - Sales already in the ledger are skipped, so importing the same file twice is safe.
-- Plushies not yet in Products can be added automatically, with 0 in stock.
+- Plushies not yet in Products can be added automatically, with 0 in stock. Event names not yet in Events can be added too, dated from their sales.
 - Imported sales don't change current stock.
 
 The free plan allows 50,000 reads and 20,000 writes per day and 1 GB of storage, far more than a craft business will use.
