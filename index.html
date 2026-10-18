@@ -11,7 +11,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;500;600;700&family=Josefin+Sans:wght@300;400&family=Sacramento&display=swap">
 <style>
 /* Layout: phone-first ledger — sticky header with yarn-stitch tabs, one column of panels, floating "Record sale" button; widens to two columns on desktop */
 :root {
@@ -216,7 +216,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 /* Barcodes */
 .bc-field { display: grid; gap: 8px; }
 .bc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.bc-img { background: #fff; border-radius: 8px; max-width: 100%; height: auto; justify-self: start; }
+.bc-img { background: #fff; border-radius: 8px; width: 112px; height: 112px; justify-self: start; }
 .scanner { position: fixed; inset: 0; z-index: 40; background: rgba(10,6,14,.85); display: flex; align-items: center; justify-content: center; padding: env(safe-area-inset-top, 0px) 12px env(safe-area-inset-bottom, 0px); }
 .scan-box { background: var(--surface); border-radius: 18px; width: 100%; max-width: 480px; padding: 14px; display: grid; gap: 10px; }
 .scan-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -225,6 +225,24 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 #scan-view video { width: 100% !important; display: block; }
 .scan-msg { font-weight: 600; min-height: 1.4em; }
 .scan-type { display: flex; gap: 8px; }
+
+/* Tag printing: pages are built in #print-root and only they print */
+.t-preview { margin-top: 12px; width: 100%; overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); background: #fff; }
+.t-preview .print-page { transform-origin: top left; }
+.t-align summary { cursor: pointer; font-weight: 600; color: var(--accent); margin-top: 10px; }
+.print-page { position: relative; width: 8.5in; height: 11in; overflow: hidden; background: #fff; color: #000; }
+.print-page svg.tag { position: absolute; overflow: visible; }
+.print-page .crop { position: absolute; background: #000; }
+#print-root { display: none; }
+@media print {
+  @page { size: letter portrait; margin: 0; }
+  html, body { background: #fff !important; }
+  body::before { display: none !important; }
+  body > *:not(#print-root) { display: none !important; }
+  #print-root { display: block; }
+  .print-page { break-after: page; page-break-after: always; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
+}
 
 /* Payment methods manager */
 .pay-list { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -378,7 +396,7 @@ import {
 
   // ---------- Barcodes ----------
   const SCAN_LIB = "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js";
-  const BARCODE_LIB = "https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js";
+  const QR_LIB = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js";
   const libs = {};
   function loadScript(src) {
     if (!libs[src]) libs[src] = new Promise((res, rej) => {
@@ -394,12 +412,29 @@ import {
     for (const p of state.products) { const m = /^PL-(\d+)$/.exec(p.barcode || ""); if (m) n = Math.max(n, +m[1]); }
     return "PL-" + String(n + 1).padStart(4, "0");
   }
-  // (an <svg> has no .hidden property, so toggle the attribute)
+  // Tags carry QR codes: they stay readable at about 1 cm, small enough for her square tag.
+  // Returns the dark modules as one SVG path filling a size×size box at (x, y). Needs QR_LIB loaded.
+  function qrPath(code, x, y, size) {
+    const q = window.qrcode(0, "M"); q.addData(code); q.make();
+    const n = q.getModuleCount(), m = size / n, f = (v) => +v.toFixed(3);
+    let d = "";
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (!q.isDark(r, c)) continue;
+        let run = 1; while (c + run < n && q.isDark(r, c + run)) run++;
+        d += `M${f(x + c * m)} ${f(y + r * m)}h${f(run * m)}v${f(m)}h${f(-run * m)}z`;
+        c += run - 1;
+      }
+    }
+    return d;
+  }
+  // Preview on the product screen (an <svg> has no .hidden property, so toggle the attribute)
   async function drawBarcode(svg, code) {
     if (!code) { svg.toggleAttribute("hidden", true); return; }
     try {
-      await loadScript(BARCODE_LIB);
-      window.JsBarcode(svg, code, { format: "CODE128", height: 48, margin: 8, fontSize: 14, background: "#ffffff", lineColor: "#000000" });
+      await loadScript(QR_LIB);
+      svg.setAttribute("viewBox", "-10 -10 120 120");
+      svg.innerHTML = `<rect x="-10" y="-10" width="120" height="120" fill="#fff"/><path fill="#000" shape-rendering="crispEdges" d="${qrPath(code, 0, 0, 100)}"/>`;
       svg.toggleAttribute("hidden", false);
     } catch (e) { svg.toggleAttribute("hidden", true); }
   }
@@ -840,7 +875,7 @@ import {
       <section class="panel">
         <div class="toolbar">
           <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
-          ${state.readOnly ? "" : `<button class="btn" data-act="new-product" id="new-product">Add plushie</button>`}
+          ${state.readOnly ? "" : `<div style="display:flex;gap:8px"><button class="btn ghost" data-act="print-tags" type="button">Print tags</button><button class="btn" data-act="new-product" id="new-product">Add plushie</button></div>`}
         </div>
         <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${state.products.length} design${state.products.length === 1 ? "" : "s"} · ${stockTotal} in stock · ${fmtShort(stockValue)} at full price</div>
       </section>
@@ -1369,6 +1404,218 @@ import {
     downloadFile(toCSV(rows), `plushie-sales-${todayStr()}.csv`);
   }
 
+  // ---------- Printing tags ----------
+  // One tag design, as SVG in tags/ (size comes from the SVG's width/height).
+  // The front is per plushie: the app fills <text id="name">, <text id="price"> and draws the QR code in <rect id="qr">.
+  // The back is the same on every tag. Fronts print first; the same sheets go back in for the backs.
+  // Tags sit edge to edge in a centered grid, so the backs land on the fronts and she cuts straight across the sheet.
+  const TAG = { front: "tags/tag-front.svg", back: "tags/tag-back.svg" };
+  const SHEET = { w: 8.5, h: 11, margin: 0.25, gap: 0 };
+  const svgCache = {};
+  function tagArt(url) {
+    if (!svgCache[url]) svgCache[url] = fetch(url).then((r) => { if (!r.ok) throw new Error("tag art " + url); return r.text(); })
+      .catch((e) => { delete svgCache[url]; throw e; });
+    return svgCache[url];
+  }
+  function toInches(v) {
+    const m = /^\s*([\d.]+)\s*(in|mm|cm|pt|px)?\s*$/.exec(v || "");
+    if (!m) return 0;
+    return +m[1] / ({ in: 1, mm: 25.4, cm: 2.54, pt: 72, px: 96 }[m[2] || "px"]);
+  }
+  const priceLabel = (n) => "$" + (Math.round(n) === +n ? String(Math.round(n)) : (+n).toFixed(2));
+  function sheetGrid(w, h) {
+    const cols = Math.max(1, Math.floor((SHEET.w - 2 * SHEET.margin + SHEET.gap) / (w + SHEET.gap)));
+    const rows = Math.max(1, Math.floor((SHEET.h - 2 * SHEET.margin + SHEET.gap) / (h + SHEET.gap)));
+    const x0 = (SHEET.w - (cols * w + (cols - 1) * SHEET.gap)) / 2, y0 = (SHEET.h - (rows * h + (rows - 1) * SHEET.gap)) / 2;
+    return { cols, rows, per: cols * rows, x0, y0 };
+  }
+  async function tagSize() {
+    const svg = new DOMParser().parseFromString(await tagArt(TAG.front), "image/svg+xml").documentElement;
+    return { w: toInches(svg.getAttribute("width")), h: toInches(svg.getAttribute("height")) };
+  }
+  const setText = (el, v) => { (el.querySelector("tspan") || el).textContent = v; };
+  function fillFront(svg, p) {
+    const name = svg.querySelector("#name"), price = svg.querySelector("#price"), slot = svg.querySelector("#qr");
+    if (name) {
+      // Long names shrink a little, then squeeze to fit the tag's width
+      const n = p.name || "", size = +name.getAttribute("font-size") || 11, room = 120;
+      const fs = n.length > 20 ? size * 0.85 : size;
+      name.setAttribute("font-size", fs);
+      setText(name, n);
+      if (n.length * fs * 0.55 > room) { name.setAttribute("textLength", room); name.setAttribute("lengthAdjust", "spacingAndGlyphs"); }
+    }
+    if (price) {
+      const label = priceLabel(p.price || 0);
+      if (label.length > 4) price.setAttribute("font-size", (+price.getAttribute("font-size") || 28) * 0.72);
+      setText(price, label);
+    }
+    if (slot && p.barcode) {
+      const sx = +slot.getAttribute("x") || 0, sy = +slot.getAttribute("y") || 0;
+      const size = Math.min(+slot.getAttribute("width") || 0, +slot.getAttribute("height") || 0);
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", qrPath(p.barcode, sx, sy, size)); path.setAttribute("fill", "#000");
+      path.setAttribute("shape-rendering", "crispEdges");
+      if (slot.getAttribute("transform")) path.setAttribute("transform", slot.getAttribute("transform"));
+      slot.after(path);
+    }
+  }
+
+  // Printable sheets. items: one plushie per front tag; for backs, pass the number of tags.
+  async function buildTagPages(side, items, opts = {}) {
+    const art = await tagArt(side === "front" ? TAG.front : TAG.back);
+    if (side === "front") await loadScript(QR_LIB);
+    const base = new DOMParser().parseFromString(art, "image/svg+xml").documentElement;
+    const w = toInches(base.getAttribute("width")), h = toInches(base.getAttribute("height"));
+    if (!w || !h) throw new Error("Tag art needs a width and height");
+    const g = sheetGrid(w, h), list = side === "front" ? items : Array(items).fill(null);
+    const back = side === "back", dx = back ? (opts.dx || 0) / 25.4 : 0, dy = back ? (opts.dy || 0) / 25.4 : 0;
+    const pages = [];
+    const line = (page, x, y, lw, lh) => {
+      const d = document.createElement("div"); d.className = "crop";
+      Object.assign(d.style, { left: x + "in", top: y + "in", width: lw + "in", height: lh + "in" }); page.appendChild(d);
+    };
+    list.forEach((p, i) => {
+      if (i % g.per === 0) {
+        const pg = document.createElement("div"); pg.className = "print-page"; pages.push(pg);
+        // Cut marks in the margins, on every cut line (only on fronts; backs are printed over them)
+        if (!back) {
+          const t = 0.007, L = 0.14, o = 0.04, gw = g.cols * w + (g.cols - 1) * SHEET.gap, gh = g.rows * h + (g.rows - 1) * SHEET.gap;
+          const xs = new Set(), ys = new Set();
+          for (let c = 0; c < g.cols; c++) { xs.add(g.x0 + c * (w + SHEET.gap)); xs.add(g.x0 + c * (w + SHEET.gap) + w); }
+          for (let r = 0; r < g.rows; r++) { ys.add(g.y0 + r * (h + SHEET.gap)); ys.add(g.y0 + r * (h + SHEET.gap) + h); }
+          for (const x of xs) { line(pg, x - t / 2, g.y0 - o - L, t, L); line(pg, x - t / 2, g.y0 + gh + o, t, L); }
+          for (const y of ys) { line(pg, g.x0 - o - L, y - t / 2, L, t); line(pg, g.x0 + gw + o, y - t / 2, L, t); }
+        }
+      }
+      const page = pages[pages.length - 1], k = i % g.per;
+      const x = g.x0 + (k % g.cols) * (w + SHEET.gap) + dx, y = g.y0 + Math.floor(k / g.cols) * (h + SHEET.gap) + dy;
+      const svg = document.importNode(base, true);
+      svg.setAttribute("width", w + "in"); svg.setAttribute("height", h + "in");
+      svg.classList.add("tag");
+      Object.assign(svg.style, { left: x + "in", top: y + "in", transform: back && opts.flip ? "rotate(180deg)" : "" });
+      if (p) fillFront(svg, p);
+      svg.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id")); // many copies on a page
+      page.appendChild(svg);
+    });
+    return { pages, grid: g, w, h };
+  }
+
+  async function printPages(pages) {
+    let root = document.getElementById("print-root");
+    if (!root) { root = document.createElement("div"); root.id = "print-root"; document.body.appendChild(root); }
+    root.replaceChildren(...pages);
+    await Promise.all([document.fonts.load("300 20px 'Josefin Sans'"), document.fonts.load("400 20px 'Josefin Sans'"),
+      document.fonts.load("20px Sacramento"), document.fonts.load("700 10px Figtree"), document.fonts.load("600 10px Figtree"),
+      document.fonts.load("400 10px Figtree")]).catch(() => {});
+    await document.fonts.ready;
+    window.addEventListener("afterprint", () => root.replaceChildren(), { once: true });
+    window.print();
+  }
+
+  function tagSheet() {
+    const saved = state.settings.tagPrint || {};
+    const opts = { dx: saved.dx || 0, dy: saved.dy || 0, flip: !!saved.flip };
+    const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    const qty = new Map();
+    const total = () => [...qty.values()].reduce((n, v) => n + v, 0);
+    openSheet(`
+      <h3>Print tags</h3>
+      <p class="hint"><b>1.</b> Pick how many tags for each plushie and print the <b>fronts</b> on cardstock.
+        <b>2.</b> Put the printed sheets back in the printer and print the <b>backs</b> on the other side.
+        <b>3.</b> Cut along the marks and punch the hole at the light circle.
+        Print at 100% (“Actual size”). Try plain paper first to check the backs line up.</p>
+      <div class="f"><span style="display:flex;justify-content:space-between;align-items:baseline">How many of each <button type="button" class="linkbtn" id="t-stock">Match stock</button></span></div>
+      <div class="rows" id="t-list">${products.length ? products.map((p) => `
+        <div class="row" data-pid="${esc(p.id)}">
+          ${avatar(p.photo, p.color)}
+          <div class="main"><div class="title">${esc(p.name)}</div><div class="sub num">${p.price ? fmt(p.price) : "Set a default price to print tags"}${p.stock ? ` · ${p.stock} in stock` : ""}</div></div>
+          <div class="stepper"><button type="button" data-d="-1" aria-label="One fewer tag">−</button><span class="n num">0</span><button type="button" data-d="1" aria-label="One more tag" ${p.price ? "" : "disabled"}>+</button></div>
+        </div>`).join("") : `<div class="empty">Add plushies on the Products tab first.</div>`}</div>
+      <div class="imp-box info num" id="t-sum" style="margin-top:12px"></div>
+      <details class="t-align"><summary>Backs don't line up?</summary>
+        <div class="fgrid" style="margin-top:10px">
+          <label class="f">Move backs right (mm)<input id="t-dx" type="number" inputmode="decimal" step="0.5" value="${opts.dx}"></label>
+          <label class="f">Move backs down (mm)<input id="t-dy" type="number" inputmode="decimal" step="0.5" value="${opts.dy}"></label>
+          <label class="full" style="display:flex;gap:8px;align-items:center;font-weight:600"><input type="checkbox" id="t-flip" style="width:auto" ${opts.flip ? "checked" : ""}> Backs come out upside down: turn them around</label>
+        </div>
+        <p class="hint" style="margin-top:8px">Negative numbers move left or up.</p>
+      </details>
+      <div class="t-tabs pay-pills" id="t-view" role="radiogroup" style="margin-top:12px">
+        <button type="button" role="radio" data-view="front" aria-checked="true">Fronts</button><button type="button" role="radio" data-view="back" aria-checked="false">Backs</button>
+      </div>
+      <div class="t-preview" id="t-prev" aria-label="Preview of the first sheet"></div>
+      <div class="actions">
+        <button class="btn ghost" type="button" id="t-cancel">Close</button>
+        <div class="right"><button class="btn" type="button" id="t-front">Print fronts</button><button class="btn ghost" type="button" id="t-back">Print backs</button></div>
+      </div>`, (el) => {
+      const $ = (s) => el.querySelector(s);
+      let per = 20, view = "front", timer;
+      const readOpts = () => { opts.dx = Number($("#t-dx").value) || 0; opts.dy = Number($("#t-dy").value) || 0; opts.flip = $("#t-flip").checked; };
+      const frontList = () => products.flatMap((p) => Array(qty.get(p.id) || 0).fill(p));
+      const sheets = () => Math.max(1, Math.ceil(total() / per));
+      // Plushies without a code get the next PL- number, so their tags can be scanned
+      const ensureCodes = async () => {
+        let n = Number((nextBarcode().match(/\d+/) || [1])[0]);
+        for (const p of products) if ((qty.get(p.id) || 0) && !p.barcode) { p.barcode = "PL-" + String(n++).padStart(4, "0"); await api.patchProduct(p.id, { barcode: p.barcode }); }
+      };
+      const summary = async () => {
+        const { w, h } = await tagSize();
+        per = sheetGrid(w, h).per;
+        const n = total();
+        $("#t-sum").innerHTML = n
+          ? `<b>${n} tag${n === 1 ? "" : "s"}</b> · ${sheets()} sheet${sheets() === 1 ? "" : "s"} of cardstock · ${per} per sheet (${w}″ × ${h}″)`
+          : `Pick how many tags to print for each plushie. ${per} fit on a sheet (${w}″ × ${h}″).`;
+      };
+      const sample = { name: "Plushie name", price: 12, barcode: "PL-0000" };
+      const preview = async () => {
+        const box = $("#t-prev");
+        try {
+          const list = frontList();
+          const { pages } = view === "front" ? await buildTagPages("front", (list.length ? list : [sample]).slice(0, per))
+            : await buildTagPages("back", per, opts);
+          const page = pages[0], s = box.clientWidth / (8.5 * 96);
+          page.style.transform = `scale(${s})`;
+          box.style.height = 11 * 96 * s + "px";
+          box.replaceChildren(page);
+        } catch (e) { console.error(e); box.textContent = "Couldn't load the tag design. Check the internet connection."; }
+      };
+      const refresh = () => { clearTimeout(timer); timer = setTimeout(async () => { await summary(); await preview(); }, 150); };
+      const setQty = (pid, n) => {
+        qty.set(pid, Math.max(0, n));
+        const row = el.querySelector(`[data-pid="${CSS.escape(pid)}"]`);
+        if (row) row.querySelector(".n").textContent = qty.get(pid);
+      };
+      $("#t-list").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-d]"); if (!b) return;
+        const pid = b.closest("[data-pid]").dataset.pid;
+        setQty(pid, (qty.get(pid) || 0) + Number(b.dataset.d)); refresh();
+      });
+      $("#t-stock").addEventListener("click", () => { for (const p of products) if (p.price) setQty(p.id, p.stock || 0); refresh(); });
+      $("#t-view").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-view]"); if (!b) return;
+        view = b.dataset.view;
+        $("#t-view").querySelectorAll("[data-view]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+        refresh();
+      });
+      el.querySelector(".t-align").addEventListener("input", () => { readOpts(); refresh(); });
+      $("#t-cancel").addEventListener("click", closeSheet);
+      const remember = () => { readOpts(); api.saveSettings({ tagPrint: { dx: opts.dx, dy: opts.dy, flip: opts.flip } }); };
+      $("#t-front").addEventListener("click", async () => {
+        if (!total()) { toast("Pick how many tags to print first."); return; }
+        remember(); await ensureCodes();
+        try { const { pages } = await buildTagPages("front", frontList()); await printPages(pages); }
+        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection."); }
+      });
+      $("#t-back").addEventListener("click", async () => {
+        remember();
+        // The back is the same on every tag, so print whole sheets to match the fronts
+        try { const { pages } = await buildTagPages("back", sheets() * per, opts); await printPages(pages); }
+        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection."); }
+      });
+      refresh();
+    });
+  }
+
   // ---------- CSV import ----------
   // Reads the same columns Download CSV writes, plus common variations, from files saved by Excel or Google Sheets.
   const IMPORT_COLS = {
@@ -1614,6 +1861,7 @@ import {
     if (t.closest("[data-act='csv']")) return downloadCSV();
     if (t.closest("[data-act='import']")) return importSheet();
     if (t.closest("[data-act='new-event']")) return eventSheet();
+    if (t.closest("[data-act='print-tags']")) return tagSheet();
     const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2in" height="2in" viewBox="0 0 144 144">
+  <!-- Clarissa Leah Makes tag, back (2 x 2 in): the same on every tag. Recreated from her printed tags.
+       The light circle marks the hole; it lines up with the front's when the sheet is flipped left to right. -->
+  <circle cx="129" cy="15" r="4.5" fill="none" stroke="#c4c4c4" stroke-width="0.5"/>
+  <g fill="#111" font-family="Figtree, Helvetica, Arial, sans-serif">
+    <text x="12" y="18" font-size="7.5" font-weight="700">CARE INSTRUCTIONS</text>
+    <text font-size="5.8">
+      <tspan x="12" y="26.5"><tspan font-weight="700">Spot clean only.</tspan> Dip a small cloth in warm</tspan>
+      <tspan x="12" y="33.3">water with mild detergent. Gently rub to</tspan>
+      <tspan x="12" y="40.1">remove spot. Squeeze out excess water and</tspan>
+      <tspan x="12" y="46.9">allow to air dry.</tspan>
+    </text>
+    <g transform="translate(12,54)">
+      <path d="M8 0.8 L15.4 14 H0.6 Z" fill="none" stroke="#111" stroke-width="1.1" stroke-linejoin="round"/>
+      <path d="M8 5 V9.4" stroke="#111" stroke-width="1.3" stroke-linecap="round"/>
+      <circle cx="8" cy="11.8" r="0.8"/>
+    </g>
+    <text x="31" y="63.5" font-size="12.5">WARNING</text>
+    <text x="31.5" y="70.5" font-size="6.2">CHOKING HAZARD</text>
+    <text font-size="5.6">
+      <tspan x="12" y="80">This handmade item is created with small</tspan>
+      <tspan x="12" y="86.6">plastic parts that can be a choking hazard</tspan>
+      <tspan x="12" y="93.2">for pets and young children. Please be</tspan>
+      <tspan x="12" y="99.8">careful with the wear and tear of this item</tspan>
+      <tspan x="12" y="106.4">as the small parts may become loose over</tspan>
+      <tspan x="12" y="113">time. Use with caution. May not be suitable</tspan>
+      <tspan x="12" y="119.6">for children under the age of 3.</tspan>
+    </text>
+    <path d="M36 124.5 H108" stroke="#111" stroke-width="0.5"/>
+    <text x="72" y="131.5" text-anchor="middle" font-size="5.6">clarissaleahmakes@gmail.com</text>
+    <g transform="translate(46.5,134)" fill="none" stroke="#111" stroke-width="0.5">
+      <rect x="0" y="0" width="5" height="5" rx="1.4"/><circle cx="2.5" cy="2.5" r="1.15"/>
+    </g>
+    <text x="54" y="138.3" font-size="5.6">@clarissaleahmakes</text>
+  </g>
+</svg>
