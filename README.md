@@ -43,15 +43,20 @@ Open the GitHub Pages link on her phone and sign in.
 
 ## What's stored
 ```
-users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, photo, pattern link, notes
-users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, date, where it sold, event, note
+users/{her-account-id}/products/{id}   name, default price, barcode, materials cost, hours to make, stock, yarn color, photo, pattern link, notes
+users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, paid with, date, where it sold, event, note (plushies bought together share an order id)
 users/{her-account-id}/events/{id}     name, first/last day, location, booth fee, notes
+users/{her-account-id}/settings/shop   payment methods
 ```
 Recording a sale lowers that plushie's stock; editing or deleting a sale puts the stock back.
 
 **Product photos** are shrunk to about 640 px and stored with the product in Firestore, so they need no paid Firebase Storage plan and work offline.
 
 **Recording a sale:** tap **Record sale**. Add one line per plushie the buyer takes (**+ Add another plushie**), with how many and the price each. The price fills in from the plushie's default price and can be typed over for a discount. A plushie that isn't set up yet can be typed in with **+ New plushie…**; it's added to Products with 0 in stock. Each plushie is saved as its own line, linked to the rest of the sale, and the lists show the sale as one row.
+
+**Barcodes:** each plushie can have a barcode. In the plushie's edit screen, **Generate** makes a code like `PL-0001` (shown as a Code 128 barcode), **Scan tag** links a barcode already on a tag, or one can be typed in. On **Record sale**, **Scan barcode** opens the camera; each scan adds that plushie at its default price, or one more if it's already in the sale. The scanner reads Code 128, QR, EAN/UPC and Code 39. It also accepts typed codes, so a Bluetooth barcode scanner works too. The scanner library loads from the internet the first time it's used in a session.
+
+**Payment methods:** the Sales tab has a **Payment methods** list (starts with Cash and Card). Each sale records **Paid with**; the first method in the list is the default. Totals by payment method show on the Sales tab, on each event, and in the "Today at" panel, for counting the cash box.
 
 **Pattern link:** each plushie can store the web address of its crochet pattern. The product card then shows a **Pattern ↗** button that opens it in a new tab.
 

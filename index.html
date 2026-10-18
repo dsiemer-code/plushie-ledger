@@ -207,6 +207,33 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .colors { display: flex; gap: 8px; flex-wrap: wrap; }
 .colors button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; background: var(--sw); padding: 0; }
 .colors button[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface) inset; }
+.line-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.line-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.pay-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pay-pills button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 8px 14px; font-weight: 600; color: var(--ink); min-height: 40px; }
+.pay-pills button[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+/* Barcodes */
+.bc-field { display: grid; gap: 8px; }
+.bc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.bc-img { background: #fff; border-radius: 8px; max-width: 100%; height: auto; justify-self: start; }
+.scanner { position: fixed; inset: 0; z-index: 40; background: rgba(10,6,14,.85); display: flex; align-items: center; justify-content: center; padding: env(safe-area-inset-top, 0px) 12px env(safe-area-inset-bottom, 0px); }
+.scan-box { background: var(--surface); border-radius: 18px; width: 100%; max-width: 480px; padding: 14px; display: grid; gap: 10px; }
+.scan-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.scan-head b { font-family: var(--font-display); font-size: 1.1rem; }
+#scan-view { width: 100%; min-height: 220px; border-radius: 12px; overflow: hidden; background: #000; }
+#scan-view video { width: 100% !important; display: block; }
+.scan-msg { font-weight: 600; min-height: 1.4em; }
+.scan-type { display: flex; gap: 8px; }
+
+/* Payment methods manager */
+.pay-list { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.pay-chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
+.pay-chip .nm { border: 0; background: none; padding: 6px 4px 6px 12px; font-weight: 600; }
+.pay-chip .nm small { color: var(--muted); font-weight: 500; margin-left: 4px; }
+.pay-chip .x { border: 0; background: none; width: 32px; height: 32px; font-size: 1.05rem; color: var(--muted); }
+.pay-add { display: flex; gap: 8px; }
+
 /* Sale lines (one per plushie) */
 .line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; margin-bottom: 8px; }
 .line-top { display: flex; gap: 8px; align-items: center; }
@@ -293,10 +320,11 @@ import {
   const fmtShort = (n) => (Math.abs(n) >= 1000 ? money0.format(n) : money.format(n || 0));
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-  const state = { tab: "overview", products: [], sales: [], events: [], loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
+  const DEFAULT_PAY = ["Cash", "Card"];
+  const state = { tab: "overview", products: [], sales: [], events: [], settings: {}, loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
 
   // Local-only fallback when saving isn't available in this view
-  const local = { products: [], sales: [], events: [] };
+  const local = { products: [], sales: [], events: [], settings: {} };
 
   function todayStr() {
     const d = new Date();
@@ -339,6 +367,95 @@ import {
     if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = "https://" + s.replace(/^\/+/, "");
     try { const u = new URL(s); return /^https?:$/.test(u.protocol) && u.hostname.includes(".") ? u.href : null; } catch (e) { return null; }
   }
+  // ---------- Payment methods ----------
+  // The first method in the list is the default on a new sale
+  const payMethods = () => (Array.isArray(state.settings.paymentMethods) && state.settings.paymentMethods.length ? state.settings.paymentMethods : DEFAULT_PAY);
+  function payBreakdown(list) {
+    const m = new Map();
+    for (const s of list) { const k = s.payment || "Not recorded"; m.set(k, round2((m.get(k) || 0) + (s.total || 0))); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${fmt(v)}`).join(" · ");
+  }
+
+  // ---------- Barcodes ----------
+  const SCAN_LIB = "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js";
+  const BARCODE_LIB = "https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js";
+  const libs = {};
+  function loadScript(src) {
+    if (!libs[src]) libs[src] = new Promise((res, rej) => {
+      const s = document.createElement("script"); s.src = src; s.onload = res;
+      s.onerror = () => { delete libs[src]; s.remove(); rej(new Error("script load failed")); };
+      document.head.appendChild(s);
+    });
+    return libs[src];
+  }
+  const productByBarcode = (code) => state.products.find((p) => p.barcode && p.barcode.toLowerCase() === code.toLowerCase());
+  function nextBarcode() {
+    let n = 0;
+    for (const p of state.products) { const m = /^PL-(\d+)$/.exec(p.barcode || ""); if (m) n = Math.max(n, +m[1]); }
+    return "PL-" + String(n + 1).padStart(4, "0");
+  }
+  // (an <svg> has no .hidden property, so toggle the attribute)
+  async function drawBarcode(svg, code) {
+    if (!code) { svg.toggleAttribute("hidden", true); return; }
+    try {
+      await loadScript(BARCODE_LIB);
+      window.JsBarcode(svg, code, { format: "CODE128", height: 48, margin: 8, fontSize: 14, background: "#ffffff", lineColor: "#000000" });
+      svg.toggleAttribute("hidden", false);
+    } catch (e) { svg.toggleAttribute("hidden", true); }
+  }
+
+  // Camera scanner over the current screen. onCode(code) returns a message to show.
+  // Hardware (Bluetooth) scanners type the code, so the box also takes typed codes.
+  function openScanner(title, onCode, { once = false } = {}) {
+    const root = document.createElement("div");
+    root.className = "scanner";
+    root.innerHTML = `<div class="scan-box" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="scan-head"><b>${esc(title)}</b><button class="btn small" type="button" id="scan-done">Done</button></div>
+      <div id="scan-view"></div>
+      <div class="scan-msg" id="scan-msg" role="status">Starting the camera…</div>
+      <form class="scan-type" id="scan-type"><input id="scan-code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Or type the code" aria-label="Barcode"><button class="btn ghost small">Add</button></form>
+    </div>`;
+    document.body.appendChild(root);
+    const msg = (t) => { root.querySelector("#scan-msg").textContent = t; };
+    let scanner = null, closed = false, lastCode = "", lastAt = 0;
+    const close = async () => {
+      if (closed) return; closed = true;
+      try { if (scanner && scanner.isScanning) await scanner.stop(); if (scanner) scanner.clear(); } catch (e) {}
+      root.remove();
+    };
+    const got = (raw) => {
+      const code = String(raw || "").trim(), now = Date.now();
+      if (!code || closed) return;
+      if (code === lastCode && now - lastAt < 2500) return; // the same tag still in view
+      lastCode = code; lastAt = now;
+      const r = onCode(code); if (r) msg(r);
+      if (once) close();
+    };
+    root.querySelector("#scan-done").addEventListener("click", close);
+    root.querySelector("#scan-type").addEventListener("submit", (e) => { e.preventDefault(); const i = root.querySelector("#scan-code"); lastCode = ""; got(i.value); i.value = ""; });
+    (async () => {
+      try {
+        await loadScript(SCAN_LIB);
+        if (closed) return;
+        const L = window.__Html5QrcodeLibrary__, F = L.Html5QrcodeSupportedFormats;
+        scanner = new L.Html5Qrcode("scan-view", {
+          verbose: false,
+          formatsToSupport: [F.CODE_128, F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_39],
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+        });
+        await scanner.start({ facingMode: "environment" },
+          { fps: 10, qrbox: (w, h) => ({ width: Math.max(60, Math.floor(w * 0.85)), height: Math.max(60, Math.floor(h * 0.4)) }) },
+          got, () => {});
+        if (closed) { try { await scanner.stop(); scanner.clear(); } catch (e) {} return; }
+        msg(once ? "Point the camera at the barcode." : "Point at a tag's barcode. Keep scanning, then tap Done.");
+      } catch (e) {
+        console.error(e);
+        msg(/script load/.test(String(e && e.message)) ? "Couldn't load the scanner. Check the internet connection, or type the code below."
+          : "Couldn't open the camera. Allow camera access for this site, or type the code below.");
+      }
+    })();
+  }
+
   function downloadFile(text, name) {
     // BOM + CRLF so Excel opens it with the right characters and rows
     const blob = new Blob(["﻿" + text], { type: "text/csv;charset=utf-8" });
@@ -393,6 +510,11 @@ import {
       if (!fs) { local.sales = local.sales.filter((s) => s.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("sales", id)));
     },
+    // Shop-wide settings (payment methods) live in one document
+    async saveSettings(data) {
+      if (!fs) { Object.assign(local.settings, data); syncLocal(); return true; }
+      return write(() => setDoc(doc(fs, "users", uidPath, "settings", "shop"), data, { merge: true }));
+    },
     async saveEvent(id, data) {
       if (!fs) { const i = local.events.findIndex((x) => x.id === id); const rec = { id, ...data }; if (i >= 0) local.events[i] = rec; else local.events.push(rec); syncLocal(); return true; }
       return write(() => setDoc(ref("events", id), data));
@@ -418,6 +540,7 @@ import {
     state.products = local.products.slice();
     state.sales = local.sales.slice().sort(saleSort);
     state.events = local.events.slice();
+    state.settings = { ...local.settings };
     render();
   }
   const saleSort = (a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0);
@@ -454,6 +577,8 @@ import {
         exEv("ev1", "Harvest Craft Fair", 2, 2, "Town Hall", 25),
         exEv("ev2", "Holiday Makers Market", -21, -20, "Fairgrounds, Hall B", 60),
       ];
+      local.products.forEach((p, i) => { p.barcode = "PL-000" + (i + 1); });
+      local.sales.forEach((s, i) => { s.payment = i % 2 ? "Card" : "Cash"; });
       for (const s of local.sales) { const ev = local.events.find((x) => x.id === (s.id === "s4" || s.id === "s5" ? "ev0" : "ev1")); s.eventId = ev.id; s.eventName = ev.name; }
       setSync("Demo mode");
       showApp(true); syncLocal();
@@ -466,7 +591,7 @@ import {
 
     onAuthStateChanged(auth, (user) => {
       unsubs.forEach((u) => u()); unsubs = [];
-      state.products = []; state.sales = []; state.events = []; state.loaded = { p: false, s: false, e: false };
+      state.products = []; state.sales = []; state.events = []; state.settings = {}; state.loaded = { p: false, s: false, e: false };
       if (!user) { uidPath = null; setSync(""); showApp(false); return; }
       uidPath = user.uid;
       showApp(true); render();
@@ -482,6 +607,9 @@ import {
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "events"), { includeMetadataChanges: true }, (snap) => {
         state.events = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         state.loaded.e = true; setSync(syncLabel(snap)); render();
+      }, onErr));
+      unsubs.push(onSnapshot(doc(fs, "users", uidPath, "settings", "shop"), (snap) => {
+        state.settings = snap.exists() ? snap.data() : {}; render();
       }, onErr));
     });
 
@@ -657,6 +785,7 @@ import {
           <div class="stat"><div class="label">Plushies sold</div><div class="v">${t.units}</div></div>
           <div class="stat"><div class="label">After costs</div><div class="v">${fmtShort(t.profit)}</div><span class="d">yarn${ev.fee ? " & booth fee" : ""}</span></div>
         </div>
+        ${t.orders ? `<div class="num" style="margin-top:10px;padding-top:10px;border-top:2px dashed var(--line);font-size:.88rem"><span class="label">By payment</span> ${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>` : ""}
       </section>`;
     }).join("");
 
@@ -695,7 +824,7 @@ import {
     return `<div class="row salerow" data-sale="${esc(s.id)}" tabindex="0" role="button">
       ${avatar(p && p.photo, color)}
       <div class="main"><div class="title">${names} ${s.example ? '<span class="chip ex">Example</span>' : ""}</div>
-      <div class="sub">${esc(dayLabel(s.date))} · ${esc(saleEventName(s) || s.channel || "Sale")}${s.note ? " · " + esc(s.note) : ""}</div></div>
+      <div class="sub">${esc(dayLabel(s.date))} · ${esc(saleEventName(s) || s.channel || "Sale")}${s.payment ? " · " + esc(s.payment) : ""}${s.note ? " · " + esc(s.note) : ""}</div></div>
       <div class="amt num">${fmt(total)}</div></div>`;
   }
 
@@ -703,7 +832,7 @@ import {
     const sold = soldByProduct();
     const q = state.search.trim().toLowerCase();
     const list = state.products
-      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q))
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q))
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     const stockTotal = state.products.reduce((n, p) => n + (p.stock || 0), 0);
     const stockValue = state.products.reduce((n, p) => n + (p.stock || 0) * (p.price || 0), 0);
@@ -725,6 +854,7 @@ import {
               <div class="name">${esc(p.name)}</div>
               <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
               ${p.notes ? `<div class="meta">${esc(p.notes)}</div>` : ""}
+              ${p.barcode ? `<div class="meta num">Barcode ${esc(p.barcode)}</div>` : ""}
               ${cleanUrl(p.pattern) ? `<a class="pattern" href="${esc(cleanUrl(p.pattern))}" target="_blank" rel="noopener noreferrer" title="${esc(p.pattern)}">Pattern<span aria-hidden="true"> ↗</span><span class="host">${esc(new URL(cleanUrl(p.pattern)).hostname.replace(/^www\./, ""))}</span></a>` : ""}
             </div>
             ${state.readOnly ? "" : `<button class="linkbtn" data-edit="${esc(p.id)}" aria-label="Edit ${esc(p.name)}">Edit</button>`}
@@ -760,7 +890,7 @@ import {
         </div>
         <div class="bottom">
           <div class="num">${ev.example ? '<span class="chip ex">Example</span> ' : ""}${st === "now" ? '<span class="chip">Today</span> ' : ""}
-            ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after yarn${ev.fee ? " & booth fee" : ""}</div>`
+            ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after yarn${ev.fee ? " & booth fee" : ""}</div><div class="sub num" style="font-size:.78rem;color:var(--muted)">${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>`
               : `<span class="label">${st === "upcoming" ? "Coming up" : "No sales"}</span>`}
           </div>
           ${t.orders ? `<button class="linkbtn" data-event-sales="${esc(ev.id)}">See sales</button>` : ""}
@@ -813,12 +943,21 @@ import {
           </div>
         </div>
         <div class="num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${groupOrders(list).length} sale${groupOrders(list).length === 1 ? "" : "s"} · ${allUnits} plushie${allUnits === 1 ? "" : "s"} · ${fmt(allRev)}${fe ? "" : " all time"}</div>
+        ${list.length ? `<div class="num" style="margin-top:4px;color:var(--muted);font-size:.85rem">${payBreakdown(list)}</div>` : ""}
       </section>
       <section class="panel">
         ${groups.size ? [...groups.entries()].map(([k, arr]) => {
           const tot = arr.reduce((n, s) => n + (s.total || 0), 0), u = arr.reduce((n, s) => n + (s.qty || 0), 0);
           return `<div class="monthgroup"><h4><span>${esc(monthLabel(k))}</span><span class="num">${u} sold · ${fmt(tot)}</span></h4><div class="rows">${groupOrders(arr).map(saleRow).join("")}</div></div>`;
         }).join("") : `<div class="empty">${fp || fe ? "No sales match these filters." : "No sales yet. Tap “Record sale” after each sale and your history builds up here, month by month."}</div>`}
+      </section>
+      <section class="panel">
+        <h2>Payment methods</h2>
+        <p class="sub" style="margin:-6px 0 12px;color:var(--muted);font-size:.85rem">Choices for “Paid with” when recording a sale. The first one is picked by default; tap a name to make it first.</p>
+        <div class="pay-list">${payMethods().map((m, i) => `<span class="pay-chip">
+          <button class="nm" type="button" data-pay-first="${esc(m)}" ${i ? "" : "disabled"}>${esc(m)}${i ? "" : "<small>default</small>"}</button>
+          <button class="x" type="button" data-pay-remove="${esc(m)}" aria-label="Remove ${esc(m)}">×</button></span>`).join("")}</div>
+        <form class="pay-add" id="pay-add"><input id="pay-new" placeholder="e.g. Venmo, Square, Check" autocomplete="off" aria-label="New payment method"><button class="btn small" type="submit">Add</button></form>
       </section>`;
   }
 
@@ -857,6 +996,15 @@ import {
           </div>
         </div>
         <label class="f full">Name<input id="p-name" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl"></label>
+        <div class="full bc-field">
+          <label class="f">Barcode<input id="p-barcode" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(p.barcode)}" placeholder="Scan, generate or type"></label>
+          <div class="bc-actions">
+            <button type="button" class="btn ghost small" id="p-bc-scan">Scan tag</button>
+            <button type="button" class="btn ghost small" id="p-bc-gen">Generate</button>
+            <button type="button" class="linkbtn" id="p-bc-rm">Remove</button>
+          </div>
+          <svg id="p-bc-img" class="bc-img" hidden aria-label="Barcode preview" role="img"></svg>
+        </div>
         <label class="f">Default price<input id="p-price" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.price)}" placeholder="28.00"></label>
         <label class="f">In stock<input id="p-stock" inputmode="numeric" type="number" step="1" min="0" value="${esc(p.stock)}"></label>
         <label class="f">Materials cost<input id="p-cost" inputmode="decimal" type="number" step="0.01" min="0" value="${esc(p.cost)}" placeholder="Yarn, eyes, stuffing"></label>
@@ -877,6 +1025,22 @@ import {
         el.querySelector("#p-photo-rm").hidden = !photo;
       };
       showPhoto();
+      const bcIn = el.querySelector("#p-barcode");
+      let bcTimer;
+      const showBarcode = () => {
+        const v = bcIn.value.trim();
+        el.querySelector("#p-bc-rm").hidden = !v;
+        drawBarcode(el.querySelector("#p-bc-img"), v);
+      };
+      showBarcode();
+      bcIn.addEventListener("input", () => { clearTimeout(bcTimer); bcTimer = setTimeout(showBarcode, 300); });
+      el.querySelector("#p-bc-gen").addEventListener("click", () => { bcIn.value = nextBarcode(); showBarcode(); });
+      el.querySelector("#p-bc-rm").addEventListener("click", () => { bcIn.value = ""; showBarcode(); });
+      el.querySelector("#p-bc-scan").addEventListener("click", () => openScanner("Scan this plushie's tag", (code) => {
+        const other = productByBarcode(code);
+        if (other && other.id !== p.id) { toast(`That barcode is already on ${other.name}.`); return; }
+        bcIn.value = code; showBarcode(); toast(`Barcode ${code} added`);
+      }, { once: true }));
       el.querySelector("#p-photo-btn").addEventListener("click", () => el.querySelector("#p-file").click());
       el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; showPhoto(); });
       el.querySelector("#p-file").addEventListener("change", async (e) => {
@@ -896,6 +1060,9 @@ import {
         e.preventDefault();
         const name = el.querySelector("#p-name").value.trim();
         if (!name) { el.querySelector("#p-name").focus(); toast("Give the plushie a name."); return; }
+        const barcode = bcIn.value.trim();
+        const clash = barcode && productByBarcode(barcode);
+        if (clash && clash.id !== p.id) { bcIn.focus(); toast(`That barcode is already on ${clash.name}.`); return; }
         const pattern = cleanUrl(el.querySelector("#p-pattern").value);
         if (pattern === null) { el.querySelector("#p-pattern").focus(); toast("That pattern link doesn't look like a web address."); return; }
         const data = {
@@ -910,6 +1077,7 @@ import {
         };
         if (photo) data.photo = photo;
         if (pattern) data.pattern = pattern;
+        if (barcode) data.barcode = barcode;
         if (p.example) data.example = true;
         const ok = await api.saveProduct(p.id || uid(), data);
         if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
@@ -969,9 +1137,9 @@ import {
     let head;
     if (isNew) {
       const evId = by.now.length ? by.now[0].id : last && eventById(last.eventId) ? last.eventId : "";
-      head = { date: todayStr(), eventId: evId, eventName: "", channel: evId ? "Craft fair" : lastOffShowChannel(), note: "" };
+      head = { date: todayStr(), eventId: evId, eventName: "", channel: evId ? "Craft fair" : lastOffShowChannel(), note: "", payment: payMethods()[0] };
     } else {
-      head = { date: first.date, eventId: first.eventId || "", eventName: first.eventName || "", channel: first.channel || "", note: first.note || "" };
+      head = { date: first.date, eventId: first.eventId || "", eventName: first.eventName || "", channel: first.channel || "", note: first.note || "", payment: first.payment || "" };
     }
     // With no plushies set up yet, a line opens ready to type a new one
     const blankLine = () => ({ productId: products.length ? "" : "__new", qty: 1, price: "", newName: "" });
@@ -1007,7 +1175,16 @@ import {
       <h3>${isNew ? "Record a sale" : "Edit sale"}</h3>
       ${imported ? `<p class="hint">Imported past sale. Changing or deleting it won't affect current stock.</p>` : ""}
       <div id="s-lines"></div>
-      <button type="button" class="btn ghost small" id="s-addline" style="margin-bottom:14px">+ Add another plushie</button>
+      <div class="line-actions">
+        <button type="button" class="btn ghost small" id="s-addline">+ Add another plushie</button>
+        <button type="button" class="btn ghost small" id="s-scan"><svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true"><path d="M1 1v12M4 1v12M6 1v12M9 1v12M12 1v12M15 1v12" stroke="currentColor" stroke-width="1.6" fill="none"/></svg> Scan barcode</button>
+      </div>
+      <div class="f" style="margin-bottom:14px"><span>Paid with</span>
+        <div class="pay-pills" id="s-pay" role="radiogroup" aria-label="Paid with">
+          ${[...payMethods(), ...(head.payment && !payMethods().includes(head.payment) ? [head.payment] : [])]
+            .map((m) => `<button type="button" role="radio" data-pay="${esc(m)}" aria-checked="${m === head.payment}">${esc(m)}</button>`).join("")}
+        </div>
+      </div>
       <form id="sform" class="fgrid" novalidate>
         <label class="f full">Event<select id="s-event">${evSelect}</select></label>
         <label class="f full" id="s-newev-wrap" hidden>New event name<input id="s-newev" placeholder="e.g. Holiday Craft Fair"></label>
@@ -1055,6 +1232,29 @@ import {
           d.querySelector(".n").textContent = ln.qty; d.querySelector(".l-sub").textContent = fmt(lineTotal(ln)); updTotal();
         }
       });
+      let payment = head.payment;
+      $("#s-pay").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-pay]"); if (!b) return;
+        payment = b.dataset.pay;
+        $("#s-pay").querySelectorAll("[data-pay]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+      });
+      // Each scan adds that plushie at its default price, or one more if it's already in the sale
+      $("#s-scan").addEventListener("click", () => openScanner("Scan plushie tags", (code) => {
+        const p = productByBarcode(code);
+        if (!p) return `No plushie has barcode ${code}. Add it to the plushie in Products.`;
+        const price = p.price || p.price === 0 ? p.price : "";
+        let ln = lines.find((l) => l.productId === p.id);
+        if (ln) ln.qty++;
+        else {
+          ln = lines.find((l) => !l.productId || (l.productId === "__new" && !l.newName.trim()));
+          if (ln) Object.assign(ln, { productId: p.id, price, newName: "", qty: 1 });
+          else lines.push((ln = { productId: p.id, qty: 1, price, newName: "" }));
+        }
+        renderLines();
+        if (navigator.vibrate) navigator.vibrate(60);
+        const units = lines.reduce((n, l) => n + l.qty, 0);
+        return `Added ${p.name}${ln.qty > 1 ? ` (×${ln.qty})` : ""} · ${units} plushie${units === 1 ? "" : "s"}, ${fmt(lines.reduce((n, l) => n + lineTotal(l), 0))}`;
+      }));
       $("#s-addline").addEventListener("click", () => {
         lines.push(blankLine()); renderLines();
         const sel = box.querySelectorAll(".l-product")[lines.length - 1]; sel.focus();
@@ -1116,7 +1316,7 @@ import {
           const data = {
             productId: ln.productId, productName: p ? p.name : ln.productName || "", color: p ? p.color || "" : ln.color || "",
             qty: ln.qty, unitPrice, total: round2(ln.qty * unitPrice), unitCost: p ? p.cost || 0 : ln.unitCost || 0,
-            date, channel, eventId, eventName, note, orderId, createdAt: (prev && prev.createdAt) || now + i,
+            date, channel, eventId, eventName, note, payment, orderId, createdAt: (prev && prev.createdAt) || now + i,
           };
           if (first && first.example) data.example = true;
           if (imported) data.imported = true;
@@ -1155,7 +1355,7 @@ import {
     toast("Examples removed");
   }
 
-  const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Materials each", "Sold through", "Event", "Note"];
+  const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Paid with", "Materials each", "Sold through", "Event", "Note"];
   const toCSV = (rows) => {
     const q = (v) => { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     return rows.map((r) => r.map(q).join(",")).join("\r\n") + "\r\n";
@@ -1164,7 +1364,7 @@ import {
     const rows = [CSV_HEAD];
     for (const s of state.sales) {
       const p = productById(s.productId);
-      rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), (s.unitCost || 0).toFixed(2), s.channel, saleEventName(s), s.note]);
+      rows.push([s.date, p ? p.name : s.productName, s.qty, (s.unitPrice || 0).toFixed(2), (s.total || 0).toFixed(2), s.payment || "", (s.unitCost || 0).toFixed(2), s.channel, saleEventName(s), s.note]);
     }
     downloadFile(toCSV(rows), `plushie-sales-${todayStr()}.csv`);
   }
@@ -1181,6 +1381,7 @@ import {
     channel: ["sold through", "channel", "source", "sold via"],
     event: ["event", "show", "craft show", "event name", "show name", "fair", "market", "location", "venue", "where", "sold at", "where sold"],
     note: ["note", "notes", "comment", "comments", "buyer", "details"],
+    payment: ["paid with", "payment", "payment method", "paid by", "method", "tender", "pay"],
   };
 
   function decodeText(buf) {
@@ -1300,7 +1501,8 @@ import {
         if (date > ne.end) ne.end = date;
         newEvents.set(evLower, ne);
       }
-      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, event, note: get(r, "note") });
+      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, event, note: get(r, "note"),
+        payment: (() => { const v = get(r, "payment"); return payMethods().find((m) => m.toLowerCase() === v.toLowerCase()) || v; })() });
     });
     ok.sort((a, b) => a.date.localeCompare(b.date));
     return { ok, issues, dups, newNames: [...newNames.values()], newEvents: [...newEvents.values()] };
@@ -1385,7 +1587,7 @@ import {
           return {
             id: uid(), productId: p ? p.id : "", productName: p ? p.name : s.name, color: p ? p.color || "" : "",
             qty: s.qty, unitPrice: s.unitPrice, total: s.total, unitCost: s.unitCost ?? (p ? p.cost || 0 : 0),
-            date: s.date, channel: s.channel, eventId: ev ? ev.id : "", eventName: ev ? ev.name : s.event,
+            date: s.date, channel: s.channel, payment: s.payment, eventId: ev ? ev.id : "", eventName: ev ? ev.name : s.event,
             note: s.note, createdAt: now + i, imported: true,
           };
         });
@@ -1425,6 +1627,25 @@ import {
     if (e.key === "Enter" && e.target.matches("[data-sale]")) e.target.click();
   });
   view.addEventListener("input", (e) => { if (e.target.id === "q") { state.search = e.target.value; render(); } });
+  // Payment methods manager (Sales tab)
+  view.addEventListener("submit", (e) => {
+    if (e.target.id !== "pay-add") return;
+    e.preventDefault();
+    const name = document.getElementById("pay-new").value.trim();
+    if (!name) return;
+    const list = payMethods();
+    if (list.some((m) => m.toLowerCase() === name.toLowerCase())) { toast(`${name} is already in the list.`); return; }
+    api.saveSettings({ paymentMethods: [...list, name] });
+  });
+  view.addEventListener("click", (e) => {
+    const first = e.target.closest("[data-pay-first]"), rm = e.target.closest("[data-pay-remove]");
+    if (first) { const m = first.dataset.payFirst; api.saveSettings({ paymentMethods: [m, ...payMethods().filter((x) => x !== m)] }); }
+    if (rm) {
+      const rest = payMethods().filter((x) => x !== rm.dataset.payRemove);
+      if (!rest.length) { toast("Keep at least one payment method."); return; }
+      api.saveSettings({ paymentMethods: rest }); toast(`${rm.dataset.payRemove} removed. Past sales keep it.`);
+    }
+  });
   view.addEventListener("change", (e) => {
     if (e.target.id === "filter-product") { state.filterProduct = e.target.value; render(); }
     if (e.target.id === "filter-event") { state.filterEvent = e.target.value; render(); }
