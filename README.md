@@ -43,7 +43,7 @@ Open the GitHub Pages link on her phone and sign in.
 
 ## What's stored
 ```
-users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, photo, notes
+users/{her-account-id}/products/{id}   name, price, materials cost, hours to make, stock, yarn color, photo, pattern link, notes
 users/{her-account-id}/sales/{id}      plushie, quantity, price each, total, date, where it sold, event, note
 users/{her-account-id}/events/{id}     name, first/last day, location, booth fee, notes
 ```
@@ -51,10 +51,19 @@ Recording a sale lowers that plushie's stock; editing or deleting a sale puts th
 
 **Product photos** are shrunk to about 640 px and stored with the product in Firestore, so they need no paid Firebase Storage plan and work offline.
 
-## Events (craft shows)
-The **Events** tab holds craft shows and markets: name, dates, location and booth fee. Each one shows its sales, plushies sold, and profit after materials and the booth fee.
+**Pattern link:** each plushie can store the web address of its crochet pattern. The product card then shows a **Pattern ↗** button that opens it in a new tab.
 
-When recording a sale, the **Event** box starts on the show happening today. With no show today, it starts on the event of the last sale she recorded. **+ New event…** creates a show right from the sale screen. While a show is on, the Overview tab shows its running totals at the top.
+## Events (craft shows)
+She sells at a few craft shows a year, so the app is organized around shows rather than months.
+
+The **Events** tab holds craft shows and markets: name, dates, location and booth fee. Each one shows its sales, plushies sold, and profit after materials and the booth fee. Past shows are grouped by year with that year's totals.
+
+When recording a sale, the **Event** box starts on the show happening today. With no show today, it starts on the event of the last sale she recorded, which helps when catching up on sales after a show. **+ New event…** creates a show right from the sale screen.
+
+The **Overview** tab shows:
+- the running totals while a show is on, or the next show with the number of plushies in stock otherwise
+- this year's totals, with last year's for comparison
+- sales by show for the last six shows (tap one to see its sales)
 
 ## Importing old sales
 Sales tab → **Import CSV**. From Excel, use **File → Save As → CSV**. The first row needs headings: `Date, Plushie, Quantity, Price each` (or `Total`). `Sold through`, `Event`, `Note` and `Materials each` are optional. **Blank template** downloads an empty file with the right headings, and a file from **Download CSV** imports as-is.
