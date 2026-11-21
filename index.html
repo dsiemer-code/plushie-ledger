@@ -321,6 +321,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .pick-row .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .pick-row .meta { display: block; font-size: .82rem; font-weight: 500; color: var(--muted); }
 .pick-none { margin: 8px; color: var(--muted); }
+.pick-row.pick-new { border-bottom: 1px dashed var(--line); border-radius: 12px 12px 0 0; margin-bottom: 4px; }
 .l-remove { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.2rem; line-height: 1; flex: none; }
 .line-bottom { display: flex; align-items: center; gap: 8px; }
 .l-price { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--muted); font-weight: 600; }
@@ -1278,20 +1279,23 @@ import {
     const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
     const row = (p) => `<button type="button" class="pick-row" data-id="${esc(p.id)}" aria-selected="${p.id === currentId}">${avatar(p.photo, p.color)}
       <span class="nm">${esc(p.name)}<span class="meta">${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${p.stock || 0} left</span></span></button>`;
+    // Something she made at the booth: sell it straight away; saving the sale adds it to Products
+    const newRow = (name) => `<button type="button" class="pick-row pick-new" data-id="__new" data-name="${esc(name)}"><span class="pick-plus" aria-hidden="true">+</span>
+      <span class="nm">${name ? `Sell “${esc(name)}” as a new plushie` : "New plushie (not in Products yet)"}<span class="meta">${name ? "Enter its price next. It's added to Products when you save the sale" : "Made at the booth? Type its name and price. It's added to Products when you save the sale"}</span></span></button>`;
     const draw = () => {
-      const t = q.value.trim().toLowerCase();
+      const typed = q.value.trim(), t = typed.toLowerCase();
       const hits = t ? products.filter((p) => (p.name || "").toLowerCase().includes(t)) : products;
-      list.innerHTML = hits.map(row).join("")
-        + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(q.value.trim())}”.</p>`)
-        + `<button type="button" class="pick-row" data-id="__new"><span class="pick-plus" aria-hidden="true">+</span>
-            <span class="nm">New plushie…<span class="meta">One that isn't in Products yet</span></span></button>`;
+      const exact = hits.some((p) => (p.name || "").trim().toLowerCase() === t);
+      list.innerHTML = (exact ? "" : newRow(typed))
+        + hits.map(row).join("")
+        + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(typed)}”.</p>`);
     };
     draw();
     q.addEventListener("input", draw);
     ov.addEventListener("click", (e) => {
       if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
       const b = e.target.closest(".pick-row"); if (!b) return;
-      ov.remove(); onPick(b.dataset.id);
+      ov.remove(); onPick(b.dataset.id, b.dataset.name || "");
     });
     const cur = list.querySelector('[aria-selected="true"]'); if (cur) cur.scrollIntoView({ block: "center" });
     // Only jump to the search box with a mouse and keyboard; on a phone or iPad the keyboard would cover the list
@@ -1565,14 +1569,15 @@ import {
       renderLines();
       const lineOf = (t) => { const d = t.closest(".line"); return d ? [lines[+d.dataset.i], d] : [null, null]; };
 
-      const choose = (i) => pickProduct(products, lines[i].productId, (id) => {
+      const choose = (i) => pickProduct(products, lines[i].productId, (id, name) => {
         const ln = lines[i]; if (!ln) return;
         ln.productId = id;
         const p = productById(id);
         if (p) ln.price = p.price || p.price === 0 ? p.price : ""; // default price, which she can type over
+        if (id === "__new") { ln.newName = name || ln.newName || ""; ln.price = ""; }
         renderLines();
         const row = box.querySelectorAll(".line")[i];
-        if (id === "__new") row.querySelector(".l-newname").focus();
+        if (id === "__new") row.querySelector(ln.newName ? ".l-pricein" : ".l-newname").focus();
       });
       box.addEventListener("input", (e) => {
         const [ln, d] = lineOf(e.target); if (!ln) return;
