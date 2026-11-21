@@ -206,6 +206,11 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 /* Big sheets nearly fill the screen, leaving little backdrop to tap by accident */
 .sheet.big { height: calc(100% - 10px - env(safe-area-inset-top, 0px)); max-height: none; }
 @media (min-width: 640px) { .sheet.big { max-width: 720px; height: auto; min-height: 80%; max-height: 94%; } }
+/* Tablets: nearly fill the screen too, since a stray tap on the backdrop closes it */
+@media (min-width: 640px) and (pointer: coarse) {
+  .sheet.big { width: calc(100% - 24px); max-width: 960px; min-height: 0; max-height: none;
+    height: calc(100% - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+}
 .sheet h3 { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; margin: 0 0 14px; }
 .sheet .actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
 .sheet .actions .right { display: flex; gap: 10px; margin-left: auto; }
