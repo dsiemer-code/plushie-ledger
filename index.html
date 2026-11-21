@@ -270,7 +270,9 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .venmo-set { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
 .venmo-set h3 { margin: 0 0 4px; font-size: 1rem; }
 /* Venmo pay QR (in a sale) */
-.venmo-row { margin-top: 10px; }
+.venmo-row, .square-row { margin-top: 10px; }
+.square-row .btn { display: inline-flex; align-items: center; gap: 8px; }
+.square-row p { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
 .venmo-row .btn { display: inline-flex; align-items: center; gap: 8px; }
 .venmo-row p { margin: 0; color: var(--muted); font-size: .85rem; }
 .venmo-body { flex: 1; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 8px 16px 20px; text-align: center; }
@@ -486,6 +488,73 @@ import {
       svg.outerHTML = `<p class="hint">Couldn't make the QR code without a connection. Ask the buyer to pay <b>@${esc(venmoUser())}</b> in Venmo.</p>`;
     }
   }
+  // Square: a Card sale can hand the total to the Square Point of Sale app (Point of Sale API, mobile web).
+  // The sale is saved first, then Square opens with the amount; Square comes back to SQUARE.callback with the
+  // result (iOS: a JSON "data" parameter; Android: com.squareup.pos.* parameters). callback must exactly match
+  // the Web callback URL registered for this application in the Square Developer Console.
+  const SQUARE = { appId: "sq0idp-Gsi8OVRYzHk5hK-fddtaew", callback: "https://dsiemer-code.github.io/plushie-ledger/" };
+  const isCardPay = (m) => /card|square|credit/i.test(m || "");
+  const squareDevice = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function openSquare(orderId, amount, note) {
+    const cents = Math.round(amount * 100);
+    try { localStorage.setItem("squarePending", JSON.stringify({ orderId, at: Date.now() })); } catch (e) {}
+    if (/Android/i.test(navigator.userAgent)) {
+      location.href = "intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;"
+        + "S.com.squareup.pos.WEB_CALLBACK_URI=" + SQUARE.callback + ";S.com.squareup.pos.CLIENT_ID=" + SQUARE.appId + ";"
+        + "S.com.squareup.pos.API_VERSION=v2.0;i.com.squareup.pos.TOTAL_AMOUNT=" + cents + ";S.com.squareup.pos.CURRENCY_CODE=USD;"
+        + "S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD;S.com.squareup.pos.NOTE=" + encodeURIComponent(note) + ";"
+        + "S.com.squareup.pos.REQUEST_METADATA=" + encodeURIComponent(orderId) + ";end";
+      return;
+    }
+    const data = {
+      amount_money: { amount: String(cents), currency_code: "USD" },
+      callback_url: SQUARE.callback, client_id: SQUARE.appId, version: "1.3",
+      notes: note, state: orderId,
+      options: { supported_tender_types: ["CREDIT_CARD"], auto_return: true },
+    };
+    location.href = "square-commerce-v1://payment/create?data=" + encodeURIComponent(JSON.stringify(data));
+  }
+  // What Square sent back, read once at startup and acted on when the sales have loaded
+  let squareResult = (() => {
+    const q = new URLSearchParams(location.search);
+    let r = null;
+    if (q.has("data")) {
+      try { const d = JSON.parse(q.get("data")); r = { ok: d.status === "ok", orderId: d.state || "", txn: d.transaction_id || d.client_transaction_id || "", error: d.error_code || "" }; } catch (e) {}
+    } else if ([...q.keys()].some((k) => k.startsWith("com.squareup.pos."))) {
+      const g = (k) => q.get("com.squareup.pos." + k) || "";
+      r = { ok: !g("ERROR_CODE"), orderId: g("REQUEST_METADATA"), txn: g("SERVER_TRANSACTION_ID") || g("CLIENT_TRANSACTION_ID"), error: g("ERROR_CODE").replace(/^com\.squareup\.pos\.(error_)?/i, "").replace(/^error_/i, "").toLowerCase() };
+    }
+    if (!r) return null;
+    if (!r.orderId) { try { r.orderId = (JSON.parse(localStorage.getItem("squarePending") || "{}").orderId) || ""; } catch (e) {} }
+    try { localStorage.removeItem("squarePending"); } catch (e) {}
+    history.replaceState(null, "", location.pathname);
+    return r;
+  })();
+  function handleSquareResult() {
+    if (!squareResult || !(state.loaded.p && state.loaded.s && state.loaded.e)) return;
+    const r = squareResult; squareResult = null;
+    const orig = r.orderId ? state.sales.filter((x) => x.orderId === r.orderId || x.id === r.orderId) : [];
+    const total = orig.reduce((n, x) => n + (x.total || 0), 0);
+    if (r.ok) {
+      for (const x of orig) api.patchSale(x.id, { squarePaid: true, ...(r.txn ? { squareTxn: r.txn } : {}) });
+      toast(orig.length ? `Paid in Square · ${fmt(total)} · sale saved` : "Paid in Square");
+      return;
+    }
+    const why = {
+      payment_canceled: "The Square payment was canceled.", transaction_canceled: "The Square payment was canceled.",
+      could_not_perform: "Square has an unfinished sale open. Finish or clear it in Square, then try again.",
+      user_not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
+      not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
+      no_network_connection: "Square needs a connection to start the payment.", no_network: "Square needs a connection to start the payment.",
+      amount_too_small: "Square needs at least $1.00.",
+      unsupported_api_version: "Update the Square Point of Sale app, then try again.",
+      user_not_activated: "Her Square account isn't set up to take cards yet.",
+    }[r.error] || `Square didn't take the payment (${r.error || "unknown error"}).`;
+    if (orig.length) {
+      saleSheet(orig);
+      toast(`${why} The sale is still recorded: change how it was paid, charge again, or delete it.`);
+    } else toast(why);
+  }
   function payBreakdown(list) {
     const m = new Map();
     for (const s of list) { const k = s.payment || "Not recorded"; m.set(k, round2((m.get(k) || 0) + (s.total || 0))); }
@@ -646,6 +715,10 @@ import {
     async saveSale(id, data) {
       if (!fs) { const i = local.sales.findIndex((s) => s.id === id); const rec = { id, ...data }; if (i >= 0) local.sales[i] = rec; else local.sales.push(rec); syncLocal(); return true; }
       return write(() => setDoc(ref("sales", id), data));
+    },
+    async patchSale(id, data) {
+      if (!fs) { const x = local.sales.find((s) => s.id === id); if (x) Object.assign(x, data); syncLocal(); return true; }
+      return write(() => updateDoc(ref("sales", id), data));
     },
     async deleteSale(id) {
       if (!fs) { local.sales = local.sales.filter((s) => s.id !== id); syncLocal(); return true; }
@@ -836,6 +909,7 @@ import {
     else if (state.tab === "events") html += eventsHTML();
     else html += salesHTML();
     v.innerHTML = html;
+    if (squareResult) setTimeout(handleSquareResult, 0);
     if (active === "q") { const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
   }
 
@@ -1371,6 +1445,7 @@ import {
             .map((m) => `<button type="button" role="radio" data-pay="${esc(m)}" aria-checked="${m === head.payment}">${esc(m)}</button>`).join("")}
         </div>
         <div class="venmo-row" id="s-venmo" hidden></div>
+        <div class="square-row" id="s-square" hidden></div>
       </div>
       <form id="sform" class="fgrid" novalidate>
         <label class="f full">Event<select id="s-event">${evSelect}</select></label>
@@ -1390,7 +1465,17 @@ import {
         const units = lines.reduce((n, ln) => n + ln.qty, 0);
         $("#s-total").textContent = fmt(lines.reduce((n, ln) => n + lineTotal(ln), 0));
         $("#s-count").textContent = units > 1 ? `Total · ${units} plushies` : "Total";
-        updVenmo();
+        updVenmo(); updSquare();
+      };
+      const updSquare = () => {
+        const row = $("#s-square"); if (!row) return;
+        row.hidden = !isCardPay(payment) || !squareDevice() || imported;
+        if (row.hidden) return;
+        const t = saleTotal();
+        row.innerHTML = `<button type="button" class="btn small" id="s-square-go" ${t >= 1 ? "" : "disabled"}>
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="currentColor"/></svg>
+          ${t >= 1 ? `Save and charge ${fmt(t)} in Square` : "Square needs at least $1.00"}</button>
+          <p>Saves the sale, then opens Square with the total. If the payment doesn't go through, you can change or delete the sale.</p>`;
       };
       const saleTotal = () => round2(lines.reduce((n, ln) => n + lineTotal(ln), 0));
       const saleNote = () => lines.map((ln) => {
@@ -1441,8 +1526,10 @@ import {
         const b = e.target.closest("[data-pay]"); if (!b) return;
         payment = b.dataset.pay;
         $("#s-pay").querySelectorAll("[data-pay]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-        updVenmo();
+        updVenmo(); updSquare();
       });
+      let thenSquare = false;
+      $("#s-square").addEventListener("click", (e) => { if (e.target.closest("#s-square-go")) { thenSquare = true; $("#sform").requestSubmit(); } });
       $("#s-venmo").addEventListener("click", (e) => { if (e.target.closest("#s-venmo-qr")) showVenmoQR(saleTotal(), saleNote()); });
       // Each scan adds that plushie at its default price, or one more if it's already in the sale
       $("#s-scan").addEventListener("click", () => openScanner("Scan plushie tags", (code) => {
@@ -1479,6 +1566,7 @@ import {
 
       $("#sform").addEventListener("submit", async (e) => {
         e.preventDefault();
+        const goSquare = thenSquare; thenSquare = false;
         const rows = box.querySelectorAll(".line"), which = (i) => (lines.length > 1 ? ` for plushie ${i + 1}` : "");
         for (const [i, ln] of lines.entries()) {
           if (!ln.productId) { rows[i].querySelector(".l-product").focus(); toast(`Choose a plushie${which(i)}.`); return; }
@@ -1537,6 +1625,7 @@ import {
         }
         closeSheet();
         const units = lines.reduce((n, ln) => n + ln.qty, 0), total = lines.reduce((n, ln) => n + lineTotal(ln), 0);
+        if (goSquare) { toast("Sale saved. Opening Square…"); openSquare(orderId, round2(total), saleNote()); return; }
         toast(isNew ? `Sale saved · ${units > 1 ? `${units} plushies · ` : ""}${fmt(total)}` : "Sale updated");
       });
 
