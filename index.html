@@ -165,6 +165,27 @@ h2.sect { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem
 /* Products */
 .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 .toolbar .search { flex: 1 1 200px; }
+/* Inventory controls (Products tab) */
+.inv-bar { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; margin-top: 12px; }
+.inv-bar .inv-filters { order: 3; grid-column: 1 / -1; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; padding: 0 2px; }
+.inv-bar .inv-filters::-webkit-scrollbar { display: none; }
+.inv-bar .inv-filters button { flex: none; }
+@media (min-width: 760px) { .inv-bar { display: flex; flex-wrap: wrap; } .inv-bar .inv-filters { order: 0; } }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px; background: var(--bg); }
+.seg button { border: 0; background: none; border-radius: 999px; padding: 6px 14px; font-weight: 600; color: var(--muted); min-height: 36px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.inv-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.inv-filters button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 6px 12px; font-weight: 600; color: var(--ink); min-height: 36px; }
+.inv-filters button .num { color: var(--muted); font-weight: 500; margin-left: 2px; }
+.inv-filters button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.inv-filters button[aria-pressed="true"] .num { color: var(--accent); }
+.inv-sort { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .85rem; font-weight: 600; justify-self: end; margin-left: auto; }
+.inv-sort select { width: auto; padding: 6px 10px; }
+.inv-list .row:first-child { border-top: 0; }
+.inv-list .thumb, .inv-list .swatch { width: 40px; height: 40px; }
+.inv-list .thumb { border-radius: 8px; }
+.inv-list .linkish { border: 0; background: none; padding: 0; text-align: left; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; }
+.inv-foot { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--muted); font-size: .85rem; }
 .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .pcard { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; display: grid; gap: 12px; min-width: 0; }
 .pcard .top { display: flex; gap: 12px; align-items: flex-start; }
@@ -1129,12 +1150,59 @@ import {
       <div class="amt num">${fmt(total)}</div></div>`;
   }
 
+  // Inventory view choices (cards or a compact list, which stock to show, sort order), remembered on this device
+  const INV_FILTERS = { all: ["All", () => true], in: ["In stock", (n) => n > 0], low: ["Low", (n) => n > 0 && n <= 2], out: ["Sold out", (n) => n <= 0] };
+  const INV_SORTS = { name: "Name", most: "Most in stock", least: "Fewest in stock" };
+  const inv = Object.assign({ view: "cards", filter: "all", sort: "name" }, (() => { try { return JSON.parse(localStorage.getItem("invView") || "{}"); } catch (e) { return {}; } })());
+  if (!INV_FILTERS[inv.filter]) inv.filter = "all";
+  if (!INV_SORTS[inv.sort]) inv.sort = "name";
+  const saveInv = () => { try { localStorage.setItem("invView", JSON.stringify(inv)); } catch (e) {} };
+
   function productsHTML() {
     const sold = soldByProduct();
     const q = state.search.trim().toLowerCase();
-    const list = state.products
-      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q))
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    const found = state.products
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q));
+    const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
+    const list = found.filter((p) => INV_FILTERS[inv.filter][1](p.stock || 0))
+      .sort(inv.sort === "most" ? (a, b) => (b.stock || 0) - (a.stock || 0) || byName(a, b)
+        : inv.sort === "least" ? (a, b) => (a.stock || 0) - (b.stock || 0) || byName(a, b) : byName);
+    const invBar = `<div class="inv-bar">
+          <div class="seg" role="group" aria-label="Show as">${[["cards", "Cards"], ["list", "List"]].map(([k, l]) => `<button type="button" data-inv-view="${k}" aria-pressed="${inv.view === k}">${l}</button>`).join("")}</div>
+          <div class="inv-filters" role="group" aria-label="Which plushies">${Object.entries(INV_FILTERS).map(([k, [l, f]]) => `<button type="button" data-inv-filter="${k}" aria-pressed="${inv.filter === k}">${l} <span class="num">${found.filter((p) => f(p.stock || 0)).length}</span></button>`).join("")}</div>
+          <label class="inv-sort"><span>Sort</span><select id="inv-sort" aria-label="Sort plushies">${Object.entries(INV_SORTS).map(([k, l]) => `<option value="${k}" ${inv.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        </div>`;
+    const stepper = (p) => `<div class="stepper" aria-label="Stock for ${esc(p.name)}">
+              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="-1" aria-label="One fewer ${esc(p.name)} in stock">−</button>`}
+              <span class="n num">${p.stock || 0}</span>
+              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="1" aria-label="One more ${esc(p.name)} in stock">+</button>`}
+            </div>`;
+    const empty = `<section class="panel"><div class="empty">${!state.products.length ? "No plushies yet. Add each design you make with its price and how many you have on hand."
+      : !found.length ? "No plushies match that search." : `No plushies are ${INV_FILTERS[inv.filter][0].toLowerCase()} right now.`}</div></section>`;
+    if (inv.view === "list") {
+      const shown = list.reduce((n, p) => n + (p.stock || 0), 0);
+      return `
+      <section class="panel">
+        <div class="toolbar">
+          <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
+          ${state.readOnly ? "" : `<div style="display:flex;gap:8px"><button class="btn ghost" data-act="print-tags" type="button">Print tags${queueTotal() ? ` <span class="num">· ${queueTotal()}</span>` : ""}</button><button class="btn" data-act="new-product" id="new-product">Add plushie</button></div>`}
+        </div>
+        <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${state.products.length} design${state.products.length === 1 ? "" : "s"} · ${state.products.reduce((n, p) => n + (p.stock || 0), 0)} in stock · ${fmtShort(state.products.reduce((n, p) => n + (p.stock || 0) * (p.price || 0), 0))} at full price</div>
+        ${invBar}
+      </section>
+      ${list.length ? `<section class="panel"><div class="rows inv-list">${list.map((p) => {
+        const stock = p.stock || 0, u = (sold.get(p.id) || { units: 0 }).units;
+        return `<div class="row">
+          ${avatar(p.photo, p.color)}
+          <div class="main">
+            ${state.readOnly ? `<div class="title">${esc(p.name)}</div>` : `<button class="title linkish" type="button" data-edit="${esc(p.id)}">${esc(p.name)}</button>`}
+            <div class="sub num">${fmt(p.price)} · ${u} sold${stock <= 0 ? ' · <span class="chip low">Sold out</span>' : stock === 1 ? ' · <span class="chip low">Last one</span>' : ""}</div>
+          </div>
+          ${stepper(p)}
+        </div>`;
+      }).join("")}</div>
+        <div class="sub num inv-foot">${list.length} plushie${list.length === 1 ? "" : "s"} shown · ${shown} in stock</div></section>` : empty}`;
+    }
     const stockTotal = state.products.reduce((n, p) => n + (p.stock || 0), 0);
     const stockValue = state.products.reduce((n, p) => n + (p.stock || 0) * (p.price || 0), 0);
     return `
@@ -1144,6 +1212,7 @@ import {
           ${state.readOnly ? "" : `<div style="display:flex;gap:8px"><button class="btn ghost" data-act="print-tags" type="button">Print tags${queueTotal() ? ` <span class="num">· ${queueTotal()}</span>` : ""}</button><button class="btn" data-act="new-product" id="new-product">Add plushie</button></div>`}
         </div>
         <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${state.products.length} design${state.products.length === 1 ? "" : "s"} · ${stockTotal} in stock · ${fmtShort(stockValue)} at full price</div>
+        ${invBar}
       </section>
       ${list.length ? `<div class="cards">${list.map((p) => {
         const s = sold.get(p.id) || { units: 0 };
@@ -1165,14 +1234,10 @@ import {
             <div>
               ${p.example ? '<span class="chip ex">Example</span> ' : ""}${stock <= 1 ? `<span class="chip low">${stock ? "Last one" : "Sold out"}</span> ` : ""}<span class="label num">${s.units} sold</span>
             </div>
-            <div class="stepper" aria-label="Stock for ${esc(p.name)}">
-              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="-1" aria-label="One fewer in stock">−</button>`}
-              <span class="n num">${stock}</span>
-              ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="1" aria-label="One more in stock">+</button>`}
-            </div>
+            ${stepper(p)}
           </div>
         </article>`;
-      }).join("")}</div>` : `<section class="panel"><div class="empty">${state.products.length ? "No plushies match that search." : "No plushies yet. Add each design you make with its price and how many you have on hand."}</div></section>`}
+      }).join("")}</div>` : empty}
     `;
   }
 
@@ -2269,6 +2334,8 @@ import {
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
+    const iv = t.closest("[data-inv-view]"); if (iv) { inv.view = iv.dataset.invView; saveInv(); render(); return; }
+    const ifl = t.closest("[data-inv-filter]"); if (ifl) { inv.filter = ifl.dataset.invFilter; saveInv(); render(); return; }
     const st = t.closest("[data-stock]");
     if (st) { const p = productById(st.dataset.stock); if (p) api.patchProduct(p.id, { stock: Math.max(0, (p.stock || 0) + Number(st.dataset.d)) }); return; }
     const sr = t.closest("[data-sale]");
@@ -2308,6 +2375,7 @@ import {
     }
   });
   view.addEventListener("change", (e) => {
+    if (e.target.id === "inv-sort") { inv.sort = e.target.value; saveInv(); render(); return; }
     if (e.target.id === "filter-product") { state.filterProduct = e.target.value; render(); }
     if (e.target.id === "filter-event") { state.filterEvent = e.target.value; render(); }
   });
