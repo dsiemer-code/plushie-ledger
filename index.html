@@ -1175,7 +1175,7 @@ import {
       if (!isNew) armDelete($("#e-del"), "Delete", async () => {
         if (await api.deleteEvent(ev.id)) { closeSheet(); toast("Event deleted. Its sales stay in your history."); }
       });
-    });
+    }, { big: true });
   }
 
   // A sale can hold several plushies. Each plushie is stored as its own sales line (so stock, best sellers
