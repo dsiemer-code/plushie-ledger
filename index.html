@@ -597,16 +597,21 @@ import {
       </div>`;
       document.body.appendChild(ov);
       // A tab another app opened can usually close itself; if Safari refuses, just hide the message
-      ov.querySelector("#sq-close").addEventListener("click", () => { window.close(); setTimeout(() => ov.remove(), 300); });
+      ov.querySelector("#sq-close").addEventListener("click", (e) => {
+        // Not signed in: uncover the sign-in form instead of closing the tab
+        if (e.currentTarget.dataset.mode === "signin") { ov.remove(); const em = document.getElementById("si-email"); if (em) em.focus(); return; }
+        window.close(); setTimeout(() => ov.remove(), 300);
+      });
     }
     const msg = {
       saved: "Recorded in the ledger. This tab closes by itself.",
       missing: "Couldn't find the sale here yet. It's still saved in the app.",
       failed: "Couldn't update the ledger from here. The sale is still saved; check how it was paid in the app.",
-      signin: "Safari isn't signed in to the ledger, so the app won't show this result. The sale is still saved. Sign in once in Safari (close this message) so next time it updates by itself.",
+      signin: "Safari isn't signed in to the ledger, so the app won't show this result. The sale is still saved. Sign in here once so next time it updates by itself.",
     }[phase];
     if (msg) ov.querySelector("#sq-status").textContent = msg;
     // Square opens a new Safari tab every time; once the result is recorded, close it so they don't pile up
+    if (phase === "signin") { const b = ov.querySelector("#sq-close"); b.textContent = "Sign in here"; b.dataset.mode = "signin"; b.className = "btn small"; }
     if (phase === "saved" || phase === "missing") setTimeout(() => window.close(), 2500);
   }
   const squareLandingResult = squareResult && !squareResult.here ? squareResult : null;
