@@ -272,6 +272,13 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 /* Venmo pay QR (in a sale) */
 .venmo-row, .square-row { margin-top: 10px; }
 .square-row .btn { display: inline-flex; align-items: center; gap: 8px; }
+.sq-landing { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 24px; }
+.sq-card { max-width: 420px; text-align: center; display: grid; gap: 12px; justify-items: center; }
+.sq-card h2 { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; }
+.sq-card p { margin: 0; }
+.sq-icon { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 2rem; font-weight: 700; color: #fff; background: var(--accent); }
+.sq-icon.bad { background: #C0504D; }
+.sq-status { color: var(--muted); font-size: .9rem; }
 .square-row p { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
 .venmo-row .btn { display: inline-flex; align-items: center; gap: 8px; }
 .venmo-row p { margin: 0; color: var(--muted); font-size: .85rem; }
@@ -489,71 +496,123 @@ import {
     }
   }
   // Square: a Card sale can hand the total to the Square Point of Sale app (Point of Sale API, mobile web).
-  // The sale is saved first, then Square opens with the amount; Square comes back to SQUARE.callback with the
-  // result (iOS: a JSON "data" parameter; Android: com.squareup.pos.* parameters). callback must exactly match
+  // The sale is saved first, then Square opens with the amount. Square comes back to SQUARE.callback with the
+  // result (iOS: a JSON "data" parameter; Android: com.squareup.pos.* parameters); callback must exactly match
   // the Web callback URL registered for this application in the Square Developer Console.
+  // On iOS that return trip always opens Safari, never the home-screen app. So whichever copy of the app
+  // receives the result writes it onto the sale (squareStatus), and the copy that started the charge
+  // (it remembers the order in squarePending) reacts when it sees that, once she switches back to it.
   const SQUARE = { appId: "sq0idp-Gsi8OVRYzHk5hK-fddtaew", callback: "https://dsiemer-code.github.io/plushie-ledger/" };
   const isCardPay = (m) => /card|square|credit/i.test(m || "");
   const squareDevice = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+    del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+  };
   function openSquare(orderId, amount, note) {
-    const cents = Math.round(amount * 100);
-    try { localStorage.setItem("squarePending", JSON.stringify({ orderId, at: Date.now() })); } catch (e) {}
+    const cents = Math.round(amount * 100), st = orderId + "|" + cents;
+    store.set("squarePending", { orderId, cents, at: Date.now() });
     if (/Android/i.test(navigator.userAgent)) {
       location.href = "intent:#Intent;action=com.squareup.pos.action.CHARGE;package=com.squareup;"
         + "S.com.squareup.pos.WEB_CALLBACK_URI=" + SQUARE.callback + ";S.com.squareup.pos.CLIENT_ID=" + SQUARE.appId + ";"
         + "S.com.squareup.pos.API_VERSION=v2.0;i.com.squareup.pos.TOTAL_AMOUNT=" + cents + ";S.com.squareup.pos.CURRENCY_CODE=USD;"
         + "S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD;S.com.squareup.pos.NOTE=" + encodeURIComponent(note) + ";"
-        + "S.com.squareup.pos.REQUEST_METADATA=" + encodeURIComponent(orderId) + ";end";
+        + "S.com.squareup.pos.REQUEST_METADATA=" + encodeURIComponent(st) + ";end";
       return;
     }
     const data = {
       amount_money: { amount: String(cents), currency_code: "USD" },
       callback_url: SQUARE.callback, client_id: SQUARE.appId, version: "1.3",
-      notes: note, state: orderId,
+      notes: note, state: st,
       options: { supported_tender_types: ["CREDIT_CARD"], auto_return: true },
     };
     location.href = "square-commerce-v1://payment/create?data=" + encodeURIComponent(JSON.stringify(data));
   }
+  const squareWhy = (code) => ({
+    payment_canceled: "The Square payment was canceled.", transaction_canceled: "The Square payment was canceled.",
+    could_not_perform: "Square has an unfinished sale open. Finish or clear it in Square, then try again.",
+    user_not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
+    not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
+    no_network_connection: "Square needs a connection to start the payment.", no_network: "Square needs a connection to start the payment.",
+    amount_too_small: "Square needs at least $1.00.",
+    unsupported_api_version: "Update the Square Point of Sale app, then try again.",
+    user_not_activated: "Her Square account isn't set up to take cards yet.",
+  }[code] || `Square didn't take the payment (${code || "unknown error"}).`);
+  const orderSales = (orderId) => (orderId ? state.sales.filter((x) => x.orderId === orderId || x.id === orderId) : []);
+  // React to a Square result for a sale this copy of the app started
+  function squareOutcome(orig, ok, error, cents) {
+    const total = orig.length ? orig.reduce((n, x) => n + (x.total || 0), 0) : (cents || 0) / 100;
+    if (ok) { toast(`Paid in Square · ${fmt(total)} · sale saved`); return; }
+    if (orig.length) { saleSheet(orig); toast(`${squareWhy(error)} The sale is still recorded: change how it was paid, charge again, or delete it.`); }
+    else toast(squareWhy(error));
+  }
+
   // What Square sent back, read once at startup and acted on when the sales have loaded
   let squareResult = (() => {
     const q = new URLSearchParams(location.search);
     let r = null;
     if (q.has("data")) {
-      try { const d = JSON.parse(q.get("data")); r = { ok: d.status === "ok", orderId: d.state || "", txn: d.transaction_id || d.client_transaction_id || "", error: d.error_code || "" }; } catch (e) {}
+      try { const d = JSON.parse(q.get("data")); r = { ok: d.status === "ok", st: d.state || "", txn: d.transaction_id || d.client_transaction_id || "", error: d.error_code || "" }; } catch (e) {}
     } else if ([...q.keys()].some((k) => k.startsWith("com.squareup.pos."))) {
       const g = (k) => q.get("com.squareup.pos." + k) || "";
-      r = { ok: !g("ERROR_CODE"), orderId: g("REQUEST_METADATA"), txn: g("SERVER_TRANSACTION_ID") || g("CLIENT_TRANSACTION_ID"), error: g("ERROR_CODE").replace(/^com\.squareup\.pos\.(error_)?/i, "").replace(/^error_/i, "").toLowerCase() };
+      r = { ok: !g("ERROR_CODE"), st: g("REQUEST_METADATA"), txn: g("SERVER_TRANSACTION_ID") || g("CLIENT_TRANSACTION_ID"),
+        error: g("ERROR_CODE").replace(/^com\.squareup\.pos\.(error_)?/i, "").replace(/^error_/i, "").toLowerCase() };
     }
     if (!r) return null;
-    if (!r.orderId) { try { r.orderId = (JSON.parse(localStorage.getItem("squarePending") || "{}").orderId) || ""; } catch (e) {} }
-    try { localStorage.removeItem("squarePending"); } catch (e) {}
     history.replaceState(null, "", location.pathname);
+    const [orderId, cents] = r.st.split("|");
+    r.orderId = orderId || ""; r.cents = +cents || 0;
+    // Did the charge start in this copy of the app (same browser storage)? Then handle it here as usual.
+    const pend = store.get("squarePending");
+    r.here = !!(pend && (!r.orderId || pend.orderId === r.orderId));
+    if (r.here) { if (!r.orderId) { r.orderId = pend.orderId; r.cents = pend.cents; } store.del("squarePending"); }
     return r;
   })();
   function handleSquareResult() {
     if (!squareResult || !(state.loaded.p && state.loaded.s && state.loaded.e)) return;
     const r = squareResult; squareResult = null;
-    const orig = r.orderId ? state.sales.filter((x) => x.orderId === r.orderId || x.id === r.orderId) : [];
-    const total = orig.reduce((n, x) => n + (x.total || 0), 0);
-    if (r.ok) {
-      for (const x of orig) api.patchSale(x.id, { squarePaid: true, ...(r.txn ? { squareTxn: r.txn } : {}) });
-      toast(orig.length ? `Paid in Square · ${fmt(total)} · sale saved` : "Paid in Square");
-      return;
+    const orig = orderSales(r.orderId);
+    const mark = r.ok ? { squareStatus: "paid", squarePaid: true, ...(r.txn ? { squareTxn: r.txn } : {}) } : { squareStatus: "failed", squareError: r.error || "unknown" };
+    for (const x of orig) api.patchSale(x.id, mark);
+    if (r.here) squareOutcome(orig, r.ok, r.error, r.cents);
+    else squareLanding(orig.length ? "saved" : "missing");
+  }
+  // Opened in Safari by Square while she was using the home-screen app: say what happened and send her back
+  function squareLanding(phase) {
+    const r = squareLandingResult; if (!r) return;
+    let ov = document.getElementById("sq-landing");
+    if (!ov) {
+      ov = document.createElement("div"); ov.id = "sq-landing"; ov.className = "sq-landing";
+      ov.innerHTML = `<div class="sq-card" role="alertdialog" aria-modal="true" aria-labelledby="sq-title">
+        <div class="sq-icon ${r.ok ? "ok" : "bad"}" aria-hidden="true">${r.ok ? "✓" : "!"}</div>
+        <h2 id="sq-title">${r.ok ? `Paid in Square${r.cents ? ` · ${fmt(r.cents / 100)}` : ""}` : "Square payment didn't go through"}</h2>
+        <p>${r.ok ? "" : esc(squareWhy(r.error)) + " "}Now go back to <b>Plushie Ledger</b>: swipe up from the bottom of the screen and tap it.${r.ok ? "" : " The sale will open there so you can change or delete it."}</p>
+        <p class="sq-status" id="sq-status">Updating the ledger…</p>
+        <button type="button" class="btn ghost small" id="sq-close">Close this message</button>
+      </div>`;
+      document.body.appendChild(ov);
+      ov.querySelector("#sq-close").addEventListener("click", () => ov.remove());
     }
-    const why = {
-      payment_canceled: "The Square payment was canceled.", transaction_canceled: "The Square payment was canceled.",
-      could_not_perform: "Square has an unfinished sale open. Finish or clear it in Square, then try again.",
-      user_not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
-      not_logged_in: "Square isn't signed in. Sign in to Square Point of Sale, then try again.",
-      no_network_connection: "Square needs a connection to start the payment.", no_network: "Square needs a connection to start the payment.",
-      amount_too_small: "Square needs at least $1.00.",
-      unsupported_api_version: "Update the Square Point of Sale app, then try again.",
-      user_not_activated: "Her Square account isn't set up to take cards yet.",
-    }[r.error] || `Square didn't take the payment (${r.error || "unknown error"}).`;
-    if (orig.length) {
-      saleSheet(orig);
-      toast(`${why} The sale is still recorded: change how it was paid, charge again, or delete it.`);
-    } else toast(why);
+    const msg = {
+      saved: "Recorded in the ledger. You can close this Safari tab.",
+      missing: "Couldn't find the sale here yet. It's still saved in the app.",
+      signin: "Safari isn't signed in to the ledger, so the app won't show this result. The sale is still saved. Sign in once in Safari (close this message) so next time it updates by itself.",
+    }[phase];
+    if (msg) ov.querySelector("#sq-status").textContent = msg;
+  }
+  const squareLandingResult = squareResult && !squareResult.here ? squareResult : null;
+  if (squareLandingResult) squareLanding("start");
+  // The copy that started a charge: when the result shows up on the sale (written from Safari), react to it
+  function checkSquarePending() {
+    const pend = store.get("squarePending");
+    if (!pend || !state.loaded.s) return;
+    if (Date.now() - pend.at > 6 * 3600e3) { store.del("squarePending"); return; }
+    const orig = orderSales(pend.orderId);
+    const st = orig.length && orig[0].squareStatus;
+    if (!st) return;
+    store.del("squarePending");
+    squareOutcome(orig, st === "paid", orig[0].squareError, pend.cents);
   }
   function payBreakdown(list) {
     const m = new Map();
@@ -806,7 +865,7 @@ import {
     onAuthStateChanged(auth, (user) => {
       unsubs.forEach((u) => u()); unsubs = [];
       state.products = []; state.sales = []; state.events = []; state.settings = {}; state.loaded = { p: false, s: false, e: false };
-      if (!user) { uidPath = null; setSync(""); showApp(false); return; }
+      if (!user) { uidPath = null; setSync(""); showApp(false); if (squareLandingResult) squareLanding("signin"); return; }
       uidPath = user.uid;
       showApp(true); render();
       const onErr = (e) => { console.error(e); setSync("Can't load"); toast("Couldn't load the ledger. Check the Firestore rules in the setup guide."); };
@@ -910,6 +969,7 @@ import {
     else html += salesHTML();
     v.innerHTML = html;
     if (squareResult) setTimeout(handleSquareResult, 0);
+    else setTimeout(checkSquarePending, 0);
     if (active === "q") { const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
   }
 
@@ -1614,6 +1674,7 @@ import {
           };
           if (first && first.example) data.example = true;
           if (imported) data.imported = true;
+          if (prev && !goSquare) for (const k of ["squareStatus", "squarePaid", "squareTxn", "squareError"]) if (prev[k] !== undefined) data[k] = prev[k];
           const id = ln.docId || uid(); keep.add(id);
           if (!(await api.saveSale(id, data))) return fail();
           if (!imported) addDelta(ln.productId, -ln.qty);
