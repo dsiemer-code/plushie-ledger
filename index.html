@@ -322,6 +322,13 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-weight: 600; }
 .l-pick.empty { padding-left: 12px; font-weight: 500; color: var(--muted); }
 .l-pick.filter-pick { flex: 1 1 160px; }
+.ev-badge { flex: none; width: 48px; height: 48px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-content: center; text-align: center; line-height: 1.05; }
+.ev-badge span { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.ev-badge b { font-size: 1.2rem; }
+.l-pick .ev-badge { width: 36px; height: 36px; border-radius: 8px; }
+.l-pick .ev-badge span { font-size: .58rem; }
+.l-pick .ev-badge b { font-size: .95rem; }
+.pick-group { margin: 12px 8px 4px; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .l-pick.filter-pick.empty { color: var(--ink); }
 .l-pick .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .l-pick .nm small { font-weight: 500; color: var(--muted); font-size: .85em; }
@@ -1295,8 +1302,6 @@ import {
     const list = state.sales.filter((s) => (!fp || s.productId === fp) && (!fe || s.eventId === fe));
     const groups = new Map();
     for (const s of list) { const k = monthKey(s.date); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
-    const evOpts = state.events.slice().sort((a, b) => b.start.localeCompare(a.start))
-      .map((ev) => `<option value="${esc(ev.id)}" ${ev.id === fe ? "selected" : ""}>${esc(ev.name)}</option>`).join("");
     const allRev = list.reduce((n, s) => n + (s.total || 0), 0), allUnits = list.reduce((n, s) => n + (s.qty || 0), 0);
     return `
       <section class="panel">
@@ -1308,9 +1313,13 @@ import {
               : `<span class="nm">${esc((state.sales.find((x) => x.productId === fp) || {}).productName || "Plushie")}</span>`;
             return `<button type="button" class="l-pick filter-pick${fp ? "" : " empty"}" data-act="filter-product-pick" aria-haspopup="dialog" aria-label="Show sales for plushie">${face}</button>`;
           })()}
-          ${state.events.length ? `<select id="filter-event" aria-label="Show sales at event" style="flex:1 1 160px">
-            <option value="">All events</option>${evOpts}
-          </select>` : ""}
+          ${state.events.length ? (() => {
+            const ev = fe && eventById(fe);
+            const face = !fe ? `<span class="nm">All events</span>`
+              : ev ? `${evBadge(ev)}<span class="nm">${esc(ev.name)}</span>`
+              : `<span class="nm">${esc((state.sales.find((x) => x.eventId === fe) || {}).eventName || "Event")}</span>`;
+            return `<button type="button" class="l-pick filter-pick${fe ? "" : " empty"}" data-act="filter-event-pick" aria-haspopup="dialog" aria-label="Show sales at event">${face}</button>`;
+          })() : ""}
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn ghost small" data-act="import" type="button">Import CSV</button>
             ${state.sales.length ? `<button class="btn ghost small" data-act="csv" type="button">Download CSV</button>` : ""}
@@ -1357,6 +1366,49 @@ import {
   });
 
   // Searchable plushie list with photos, over the sale popup. onPick(id) gets a product id or "__new".
+  // Date badge for an event: month over day, like a little calendar page
+  const evBadge = (ev) => {
+    const [y, m, d] = (ev.start || "").split("-").map(Number);
+    const mon = y ? new Date(y, m - 1, d).toLocaleString([], { month: "short" }) : "";
+    return `<span class="ev-badge" aria-hidden="true"><span>${esc(mon)}</span><b>${d || ""}</b></span>`;
+  };
+  // Searchable list of events with dates and totals, for filtering sales. onPick(id) gets an event id or "" (all).
+  function pickEvent(currentId, onPick) {
+    const by = eventsInPickOrder();
+    const ov = document.createElement("div");
+    ov.className = "picker-ov";
+    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="Show sales at">
+      <div class="picker-head"><h3>Show sales at</h3><button type="button" class="btn ghost small" data-close>Close</button></div>
+      <div class="picker-search"><input type="search" placeholder="Search ${state.events.length} event${state.events.length === 1 ? "" : "s"}" aria-label="Search events" autocomplete="off"></div>
+      <div class="picker-list"></div>
+    </div>`;
+    document.getElementById("sheet-root").appendChild(ov);
+    const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
+    const row = (ev) => {
+      const t = eventTotals(ev);
+      return `<button type="button" class="pick-row" data-id="${esc(ev.id)}" aria-selected="${ev.id === currentId}">${evBadge(ev)}
+        <span class="nm">${esc(ev.name)}<span class="meta">${esc(evDates(ev))}${ev.location ? ` · ${esc(ev.location)}` : ""}</span>
+        <span class="meta num">${t.orders ? `${fmt(t.revenue)} · ${t.units} sold` : "No sales yet"}</span></span></button>`;
+    };
+    const draw = () => {
+      const t = q.value.trim().toLowerCase();
+      const hit = (ev) => !t || (ev.name || "").toLowerCase().includes(t) || (ev.location || "").toLowerCase().includes(t);
+      const group = (label, arr) => { const h = arr.filter(hit); return h.length ? `<h4 class="pick-group">${label}</h4>` + h.map(row).join("") : ""; };
+      const body = group("Today", by.now) + group("Coming up", by.upcoming) + group("Past", by.past);
+      list.innerHTML = (t ? "" : `<button type="button" class="pick-row pick-new" data-id="" aria-selected="${!currentId}"><span class="pick-plus" aria-hidden="true">★</span>
+          <span class="nm">All events<span class="meta">Show every sale</span></span></button>`)
+        + (body || `<p class="pick-none">No event matches “${esc(q.value.trim())}”.</p>`);
+    };
+    draw();
+    q.addEventListener("input", draw);
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
+      const b = e.target.closest(".pick-row"); if (!b) return;
+      ov.remove(); onPick(b.dataset.id);
+    });
+    const cur = list.querySelector('[aria-selected="true"]'); if (cur) cur.scrollIntoView({ block: "center" });
+    if (matchMedia("(pointer: fine)").matches) q.focus();
+  }
   // filter: true turns it into a "show sales for" chooser: an "All plushies" row instead of "New plushie", and sold counts
   function pickProduct(products, currentId, onPick, { filter = false } = {}) {
     const title = filter ? "Show sales for" : "Choose a plushie";
@@ -2332,6 +2384,7 @@ import {
     if (t.closest("[data-act='clear-examples']")) return clearExamples();
     if (t.closest("[data-act='csv']")) return downloadCSV();
     if (t.closest("[data-act='import']")) return importSheet();
+    if (t.closest("[data-act='filter-event-pick']")) return pickEvent(state.filterEvent, (id) => { state.filterEvent = id; render(); window.scrollTo(0, 0); });
     if (t.closest("[data-act='filter-product-pick']")) {
       const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
       return pickProduct(products, state.filterProduct, (id) => { state.filterProduct = id; render(); window.scrollTo(0, 0); }, { filter: true });
