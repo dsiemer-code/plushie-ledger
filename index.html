@@ -321,6 +321,13 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .pick-row .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .pick-row .meta { display: block; font-size: .82rem; font-weight: 500; color: var(--muted); }
 .pick-none { margin: 8px; color: var(--muted); }
+/* Event costs */
+.costs #e-costs { display: grid; gap: 8px; margin: 2px 0 8px; }
+.cost-row { display: flex; gap: 8px; align-items: center; }
+.cost-row .c-what { flex: 1.4; min-width: 0; }
+.cost-row .c-amt { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; color: var(--muted); font-weight: 600; }
+.cost-picks { display: flex; gap: 6px; flex-wrap: wrap; }
+.cost-total { margin-top: 8px; color: var(--muted); font-size: .85rem; font-weight: 500; }
 .pick-row.pick-new { border-bottom: 1px dashed var(--line); border-radius: 12px 12px 0 0; margin-bottom: 4px; }
 .l-remove { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.2rem; line-height: 1; flex: none; }
 .line-bottom { display: flex; align-items: center; gap: 8px; }
@@ -933,11 +940,16 @@ import {
     for (const s of list) { const k = orderKey(s); if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
     return [...m.values()].map((g) => g.sort(entered));
   }
+  // Money spent for a show besides yarn: the booth fee plus anything she logs (food, parking, gas…)
+  const evExpenses = (ev) => (Array.isArray(ev.expenses) ? ev.expenses.filter((x) => x && +x.amount > 0) : []);
+  const evOther = (ev) => round2(evExpenses(ev).reduce((n, x) => n + (+x.amount || 0), 0));
+  const evCosts = (ev) => round2((ev.fee || 0) + evOther(ev));
+  const costWords = (ev) => "yarn" + (ev.fee && evOther(ev) ? ", booth fee & other costs" : ev.fee ? " & booth fee" : evOther(ev) ? " & other costs" : "");
   function eventTotals(ev) {
     let revenue = 0, units = 0, cost = 0;
     const orders = new Set();
     for (const s of state.sales) if (s.eventId === ev.id) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); orders.add(orderKey(s)); }
-    return { revenue: round2(revenue), units, orders: orders.size, profit: round2(revenue - cost - (ev.fee || 0)) };
+    return { revenue: round2(revenue), units, orders: orders.size, profit: round2(revenue - cost - evCosts(ev)) };
   }
   // Happening now first, then coming up (soonest first), then past (most recent first)
   function eventsInPickOrder() {
@@ -998,7 +1010,7 @@ import {
     let revenue = 0, units = 0, cost = 0;
     for (const s of state.sales) if ((s.date || "").startsWith(y)) { revenue += s.total || 0; units += s.qty || 0; cost += (s.unitCost || 0) * (s.qty || 0); }
     const evs = state.events.filter((ev) => ev.start.startsWith(y) && ev.start <= todayStr());
-    const fees = evs.reduce((n, ev) => n + (ev.fee || 0), 0);
+    const fees = evs.reduce((n, ev) => n + evCosts(ev), 0);
     return { revenue: round2(revenue), units, profit: round2(revenue - cost - fees), shows: evs.length };
   }
 
@@ -1071,8 +1083,9 @@ import {
         <div class="stats num">
           <div class="stat"><div class="label">Sales</div><div class="v">${fmtShort(t.revenue)}</div><span class="d">${t.orders} sale${t.orders === 1 ? "" : "s"}</span></div>
           <div class="stat"><div class="label">Plushies sold</div><div class="v">${t.units}</div></div>
-          <div class="stat"><div class="label">After costs</div><div class="v">${fmtShort(t.profit)}</div><span class="d">yarn${ev.fee ? " & booth fee" : ""}</span></div>
+          <div class="stat"><div class="label">After costs</div><div class="v">${fmtShort(t.profit)}</div><span class="d">${costWords(ev)}</span></div>
         </div>
+        ${state.readOnly ? "" : `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost small" data-add-cost="${esc(ev.id)}">+ Add a cost</button>${evOther(ev) ? `<span class="label num">Other costs ${fmt(evOther(ev))}</span>` : ""}</div>`}
         ${t.orders ? `<div class="num" style="margin-top:10px;padding-top:10px;border-top:2px dashed var(--line);font-size:.88rem"><span class="label">By payment</span> ${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>` : ""}
       </section>`;
     }).join("");
@@ -1172,14 +1185,14 @@ import {
           <div class="main">
             <div class="name">${esc(ev.name)}</div>
             <div class="meta">${esc(evDates(ev))}${ev.location ? ` · ${esc(ev.location)}` : ""}</div>
-            ${ev.fee ? `<div class="meta num">Booth fee ${fmt(ev.fee)}</div>` : ""}
+            ${ev.fee || evOther(ev) ? `<div class="meta num">${[ev.fee ? `Booth fee ${fmt(ev.fee)}` : "", ...evExpenses(ev).map((x) => `${esc(x.what || "Other")} ${fmt(+x.amount)}`)].filter(Boolean).join(" · ")}</div>` : ""}
             ${ev.notes ? `<div class="meta">${esc(ev.notes)}</div>` : ""}
           </div>
           <button class="linkbtn" data-edit-event="${esc(ev.id)}" aria-label="Edit ${esc(ev.name)}">Edit</button>
         </div>
         <div class="bottom">
           <div class="num">${ev.example ? '<span class="chip ex">Example</span> ' : ""}${st === "now" ? '<span class="chip">Today</span> ' : ""}
-            ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after yarn${ev.fee ? " & booth fee" : ""}</div><div class="sub num" style="font-size:.78rem;color:var(--muted)">${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>`
+            ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after ${costWords(ev)}</div><div class="sub num" style="font-size:.78rem;color:var(--muted)">${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>`
               : `<span class="label">${st === "upcoming" ? "Coming up" : "No sales"}</span>`}
           </div>
           ${t.orders ? `<button class="linkbtn" data-event-sales="${esc(ev.id)}">See sales</button>` : ""}
@@ -1422,9 +1435,11 @@ import {
     }, { big: true });
   }
 
-  function eventSheet(ev) {
+  const COST_PICKS = ["Food", "Parking", "Gas", "Supplies", "Hotel"];
+  function eventSheet(ev, { addCost = false } = {}) {
     const isNew = !ev;
     ev = ev || { name: "", start: todayStr(), end: "", location: "", fee: "", notes: "" };
+    const costs = (Array.isArray(ev.expenses) ? ev.expenses : []).map((x) => ({ what: x.what || "", amount: x.amount ?? "" }));
     openSheet(`
       <h3>${isNew ? "Add an event" : "Edit event"}</h3>
       <form id="eform" class="fgrid" novalidate>
@@ -1434,6 +1449,11 @@ import {
         <div class="full sub" id="e-end-hint" style="color:var(--muted);font-size:.8rem;margin-top:-6px">Leave “Last day” empty for a one-day event.</div>
         <label class="f full">Location<input id="e-loc" value="${esc(ev.location)}" placeholder="Venue or address"></label>
         <label class="f">Booth fee<input id="e-fee" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(ev.fee)}" placeholder="0.00"></label>
+        <div class="f full costs" id="e-costs-wrap"><span>Other costs</span>
+          <div id="e-costs"></div>
+          <div class="cost-picks" id="e-cost-picks">${COST_PICKS.map((c) => `<button type="button" class="btn ghost small" data-cost="${c}">+ ${c}</button>`).join("")}<button type="button" class="btn ghost small" data-cost="">+ Other</button></div>
+          <div class="cost-total num" id="e-cost-total"></div>
+        </div>
         <label class="f full">Notes<textarea id="e-notes" placeholder="Booth number, setup time, contact">${esc(ev.notes)}</textarea></label>
       </form>
       <div class="actions">
@@ -1441,6 +1461,32 @@ import {
         <div class="right"><button class="btn ghost" type="button" id="e-cancel">Cancel</button><button class="btn" type="submit" form="eform">${isNew ? "Add event" : "Save"}</button></div>
       </div>`, (el) => {
       const $ = (id) => el.querySelector(id);
+      const costBox = $("#e-costs");
+      const costRow = (c, i) => `<div class="cost-row" data-i="${i}">
+        <input class="c-what" value="${esc(c.what)}" placeholder="What (e.g. Lunch)" aria-label="Cost ${i + 1}: what" autocomplete="off">
+        <label class="c-amt"><span aria-hidden="true">$</span><input class="c-amount" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(c.amount)}" placeholder="0.00" aria-label="Cost ${i + 1}: amount"></label>
+        <button type="button" class="l-remove" aria-label="Remove this cost">×</button></div>`;
+      const costTotal = () => {
+        const n = round2(costs.reduce((a, c) => a + (+c.amount || 0), 0)), fee = +$("#e-fee").value || 0;
+        $("#e-cost-total").textContent = costs.length ? `Other costs ${fmt(n)}${fee ? ` · with booth fee ${fmt(round2(n + fee))}` : ""}` : "";
+      };
+      const drawCosts = () => { costBox.innerHTML = costs.map(costRow).join(""); costTotal(); };
+      const addCostRow = (what) => {
+        costs.push({ what, amount: "" }); drawCosts();
+        const row = costBox.lastElementChild; row.scrollIntoView({ block: "nearest" });
+        row.querySelector(what ? ".c-amount" : ".c-what").focus();
+      };
+      drawCosts();
+      $("#e-cost-picks").addEventListener("click", (e) => { const b = e.target.closest("[data-cost]"); if (b) addCostRow(b.dataset.cost); });
+      costBox.addEventListener("input", (e) => {
+        const r = e.target.closest(".cost-row"); if (!r) return;
+        const c = costs[+r.dataset.i];
+        if (e.target.matches(".c-what")) c.what = e.target.value;
+        if (e.target.matches(".c-amount")) { c.amount = e.target.value; costTotal(); }
+      });
+      costBox.addEventListener("click", (e) => { const r = e.target.closest(".cost-row"); if (r && e.target.closest(".l-remove")) { costs.splice(+r.dataset.i, 1); drawCosts(); } });
+      $("#e-fee").addEventListener("input", costTotal);
+      if (addCost) setTimeout(() => $("#e-costs-wrap").scrollIntoView({ block: "center" }), 50);
       $("#e-cancel").addEventListener("click", closeSheet);
       $("#eform").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1448,7 +1494,8 @@ import {
         if (!name) { $("#e-name").focus(); toast("Give the event a name."); return; }
         let start = $("#e-start").value || todayStr(), end = $("#e-end").value || start;
         if (end < start) [start, end] = [end, start];
-        const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
+        const expenses = costs.map((c) => ({ what: c.what.trim() || "Other", amount: round2(c.amount) })).filter((c) => c.amount > 0);
+        const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), expenses, notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
         if (ev.example) data.example = true;
         if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved"); }
       });
@@ -2218,6 +2265,7 @@ import {
       return toast(`${p.name}: ${n} tag${n === 1 ? "" : "s"} in the print list`);
     }
     const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
+    const ac = t.closest("[data-add-cost]"); if (ac) return eventSheet(eventById(ac.dataset.addCost), { addCost: true });
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
