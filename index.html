@@ -1956,5 +1956,45 @@ import {
   connect();
 }
 </script>
+<script>
+// Auto-update: when she comes back to the app (and every 15 minutes while it's open), ask GitHub Pages
+// whether a newer copy of this page has been published. If so, reload, but only when nothing is in
+// progress: no popup or scanner open and no box being typed in. Otherwise it waits for the next check.
+(function () {
+  var MIN_GAP = 2 * 60 * 1000, lastCheck = 0, checking = false, waiting = false;
+  var here = Date.parse(document.lastModified);
+  if (location.protocol !== "https:" && location.hostname !== "localhost") return;
+  function busy() {
+    var sheet = document.getElementById("sheet-root");
+    if (sheet && sheet.children.length) return true;
+    if (document.querySelector(".scanner")) return true;
+    var a = document.activeElement;
+    return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  function check() {
+    if (checking || document.hidden || !navigator.onLine || Date.now() - lastCheck < MIN_GAP) return;
+    checking = true; lastCheck = Date.now();
+    // "reload" skips the phone's saved copy and refreshes it, so the reload below gets the new page
+    fetch(location.pathname, { cache: "reload" }).then(function (r) {
+      var there = Date.parse(r.headers.get("Last-Modified") || "");
+      if (!r.ok || isNaN(there) || isNaN(here) || there - here < 1000) return;
+      var tried = "";
+      try { tried = sessionStorage.getItem("ver-reload") || ""; } catch (e) {}
+      if (tried === String(there)) return; // already reloaded for this version once; don't loop
+      if (busy()) { lastCheck = 0; waiting = true; return; } // try again when the popup closes or next time
+      try { sessionStorage.setItem("ver-reload", String(there)); } catch (e) {}
+      location.reload();
+    }).catch(function () {}).then(function () { checking = false; });
+  }
+  document.addEventListener("visibilitychange", check);
+  window.addEventListener("focus", check);
+  window.addEventListener("pageshow", check);
+  setInterval(check, 15 * 60 * 1000);
+  var sheetRoot = document.getElementById("sheet-root");
+  if (sheetRoot && window.MutationObserver) new MutationObserver(function () {
+    if (waiting && !sheetRoot.children.length) { waiting = false; setTimeout(check, 800); }
+  }).observe(sheetRoot, { childList: true });
+})();
+</script>
 </body>
 </html>
