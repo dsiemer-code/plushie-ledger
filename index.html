@@ -1471,7 +1471,7 @@ import {
             <input class="vh" type="file" id="p-file" accept="image/*" tabindex="-1" aria-hidden="true">
           </div>
         </div>
-        <label class="f full">Name<input id="p-name" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl"></label>
+        <label class="f full">Plushie<input id="p-title" required value="${esc(p.name)}" placeholder="e.g. Sleepy Axolotl" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"></label>
         <div class="full bc-field">
           <label class="f">Barcode<input id="p-barcode" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(p.barcode)}" placeholder="Scan, generate or type"></label>
           <div class="bc-actions">
@@ -1534,8 +1534,8 @@ import {
       el.querySelector("#p-cancel").addEventListener("click", closeSheet);
       el.querySelector("#pform").addEventListener("submit", async (e) => {
         e.preventDefault();
-        const name = el.querySelector("#p-name").value.trim();
-        if (!name) { el.querySelector("#p-name").focus(); toast("Give the plushie a name."); return; }
+        const name = el.querySelector("#p-title").value.trim();
+        if (!name) { el.querySelector("#p-title").focus(); toast("Give the plushie a name."); return; }
         const barcode = bcIn.value.trim();
         const clash = barcode && productByBarcode(barcode);
         if (clash && clash.id !== p.id) { bcIn.focus(); toast(`That barcode is already on ${clash.name}.`); return; }
@@ -1572,11 +1572,11 @@ import {
     openSheet(`
       <h3>${isNew ? "Add an event" : "Edit event"}</h3>
       <form id="eform" class="fgrid" novalidate>
-        <label class="f full">Name<input id="e-name" required value="${esc(ev.name)}" placeholder="e.g. Holiday Craft Fair"></label>
+        <label class="f full">Event<input id="e-title" required value="${esc(ev.name)}" placeholder="e.g. Holiday Craft Fair" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"></label>
         <label class="f">First day<input id="e-start" type="date" value="${esc(ev.start)}"></label>
         <label class="f">Last day<input id="e-end" type="date" value="${esc(ev.end && ev.end !== ev.start ? ev.end : "")}" aria-describedby="e-end-hint"></label>
         <div class="full sub" id="e-end-hint" style="color:var(--muted);font-size:.8rem;margin-top:-6px">Leave “Last day” empty for a one-day event.</div>
-        <label class="f full">Location<input id="e-loc" value="${esc(ev.location)}" placeholder="Venue or address"></label>
+        <label class="f full">Location<input id="e-loc" value="${esc(ev.location)}" placeholder="Venue or address" autocomplete="off" autocorrect="on" spellcheck="true"></label>
         <label class="f">Booth fee<input id="e-fee" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(ev.fee)}" placeholder="0.00"></label>
         <div class="f full costs" id="e-costs-wrap"><span>Other costs</span>
           <div id="e-costs"></div>
@@ -1592,7 +1592,7 @@ import {
       const $ = (id) => el.querySelector(id);
       const costBox = $("#e-costs");
       const costRow = (c, i) => `<div class="cost-row" data-i="${i}">
-        <input class="c-what" value="${esc(c.what)}" placeholder="What (e.g. Lunch)" aria-label="Cost ${i + 1}: what" autocomplete="off">
+        <input class="c-what" value="${esc(c.what)}" placeholder="What (e.g. Lunch)" aria-label="Cost ${i + 1}: what" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="sentences">
         <label class="c-amt"><span aria-hidden="true">$</span><input class="c-amount" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(c.amount)}" placeholder="0.00" aria-label="Cost ${i + 1}: amount"></label>
         <button type="button" class="l-remove" aria-label="Remove this cost">×</button></div>`;
       const costTotal = () => {
@@ -1619,8 +1619,8 @@ import {
       $("#e-cancel").addEventListener("click", closeSheet);
       $("#eform").addEventListener("submit", async (e) => {
         e.preventDefault();
-        const name = $("#e-name").value.trim();
-        if (!name) { $("#e-name").focus(); toast("Give the event a name."); return; }
+        const name = $("#e-title").value.trim();
+        if (!name) { $("#e-title").focus(); toast("Give the event a name."); return; }
         let start = $("#e-start").value || todayStr(), end = $("#e-end").value || start;
         if (end < start) [start, end] = [end, start];
         const expenses = costs.map((c) => ({ what: c.what.trim() || "Other", amount: round2(c.amount) })).filter((c) => c.amount > 0);
@@ -1674,7 +1674,7 @@ import {
           <button type="button" class="l-product l-pick${ln.productId ? "" : " empty"}" aria-haspopup="dialog">${face}</button>
           ${lines.length > 1 ? `<button type="button" class="l-remove" aria-label="Remove this plushie">×</button>` : ""}
         </div>
-        ${ln.productId === "__new" ? `<input class="l-newname" autocomplete="off" placeholder="New plushie's name" value="${esc(ln.newName)}" aria-label="New plushie name">` : ""}
+        ${ln.productId === "__new" ? `<input class="l-newtitle" placeholder="What's the new plushie called?" value="${esc(ln.newName)}" aria-label="New plushie" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words">` : ""}
         <div class="line-bottom">
           <div class="stepper"><button type="button" class="l-minus" aria-label="One fewer">−</button><span class="n num">${ln.qty}</span><button type="button" class="l-plus" aria-label="One more">+</button></div>
           <label class="l-price"><span aria-hidden="true">× $</span><input class="l-pricein" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(ln.price)}" placeholder="Price" aria-label="Price each"></label>
@@ -1701,10 +1701,10 @@ import {
       </div>
       <form id="sform" class="fgrid" novalidate>
         <label class="f full">Event<select id="s-event">${evSelect}</select></label>
-        <label class="f full" id="s-newev-wrap" hidden>New event name<input id="s-newev" placeholder="e.g. Holiday Craft Fair"></label>
+        <label class="f full" id="s-newev-wrap" hidden>New event<input id="s-newev" placeholder="e.g. Holiday Craft Fair" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"></label>
         <label class="f">Date<input id="s-date" type="date" value="${esc(head.date)}"></label>
         <label class="f">Sold through<select id="s-channel">${channels.map((c) => `<option ${c === head.channel ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
-        <label class="f full">Note<input id="s-note" value="${esc(head.note)}" placeholder="Buyer, discount…"></label>
+        <label class="f full">Note<input id="s-note" value="${esc(head.note)}" placeholder="Buyer, discount…" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="sentences"></label>
       </form>
       <div class="total-line"><span class="label" id="s-count">Total</span><span class="v num" id="s-total"></span></div>
       <div class="actions">
@@ -1758,11 +1758,11 @@ import {
         if (id === "__new") { ln.newName = name || ln.newName || ""; ln.price = ""; }
         renderLines();
         const row = box.querySelectorAll(".line")[i];
-        if (id === "__new") row.querySelector(ln.newName ? ".l-pricein" : ".l-newname").focus();
+        if (id === "__new") row.querySelector(ln.newName ? ".l-pricein" : ".l-newtitle").focus();
       });
       box.addEventListener("input", (e) => {
         const [ln, d] = lineOf(e.target); if (!ln) return;
-        if (e.target.matches(".l-newname")) ln.newName = e.target.value;
+        if (e.target.matches(".l-newtitle")) ln.newName = e.target.value;
         if (e.target.matches(".l-pricein")) { ln.price = e.target.value; d.querySelector(".l-sub").textContent = fmt(lineTotal(ln)); updTotal(); }
       });
       box.addEventListener("click", (e) => {
@@ -1823,7 +1823,7 @@ import {
         const rows = box.querySelectorAll(".line"), which = (i) => (lines.length > 1 ? ` for plushie ${i + 1}` : "");
         for (const [i, ln] of lines.entries()) {
           if (!ln.productId) { rows[i].querySelector(".l-product").focus(); toast(`Choose a plushie${which(i)}.`); return; }
-          if (ln.productId === "__new" && !ln.newName.trim()) { rows[i].querySelector(".l-newname").focus(); toast(`Type the new plushie's name${which(i)}.`); return; }
+          if (ln.productId === "__new" && !ln.newName.trim()) { rows[i].querySelector(".l-newtitle").focus(); toast(`Type the new plushie's name${which(i)}.`); return; }
           if (String(ln.price).trim() === "" || !(Number(ln.price) >= 0)) { rows[i].querySelector(".l-pricein").focus(); toast(`Enter the price${which(i)}.`); return; }
         }
         const date = $("#s-date").value || todayStr(), channel = $("#s-channel").value, note = $("#s-note").value.trim();
