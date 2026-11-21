@@ -203,6 +203,9 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .sheet { background: var(--surface); width: 100%; max-width: 520px; max-height: 92%; overflow: auto;
   border-radius: 20px 20px 0 0; padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
 @media (min-width: 640px) { .sheet { border-radius: 20px; } }
+/* Big sheets nearly fill the screen, leaving little backdrop to tap by accident */
+.sheet.big { height: calc(100% - 10px - env(safe-area-inset-top, 0px)); max-height: none; }
+@media (min-width: 640px) { .sheet.big { max-width: 720px; height: auto; min-height: 80%; max-height: 94%; } }
 .sheet h3 { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; margin: 0 0 14px; }
 .sheet .actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
 .sheet .actions .right { display: flex; gap: 10px; margin-left: auto; }
@@ -1008,9 +1011,9 @@ import {
   }
 
   // ---------- Sheets ----------
-  function openSheet(html, onMount) {
+  function openSheet(html, onMount, { big = false } = {}) {
     const root = document.getElementById("sheet-root");
-    root.innerHTML = `<div class="overlay" id="overlay"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+    root.innerHTML = `<div class="overlay" id="overlay"><div class="sheet${big ? " big" : ""}" role="dialog" aria-modal="true">${html}</div></div>`;
     const ov = document.getElementById("overlay");
     ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(); });
     onMount && onMount(root.querySelector(".sheet"));
@@ -1131,7 +1134,7 @@ import {
       if (!isNew) armDelete(el.querySelector("#p-del"), "Delete", async () => {
         if (await api.deleteProduct(p.id)) { closeSheet(); toast("Plushie deleted. Its past sales stay in your history."); }
       });
-    });
+    }, { big: true });
   }
 
   function eventSheet(ev) {
