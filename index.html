@@ -177,7 +177,10 @@ h2.sect { font-family: var(--font-display); font-weight: 600; font-size: 1.05rem
 .pcard .tag-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
 .pcard .tag-row .linkbtn { padding: 4px 0; font-size: .88rem; }
 .stepper { display: inline-flex; align-items: center; gap: 4px; }
-.stepper button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.1rem; line-height: 1; }
+.stepper button { position: relative; width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 0; color: var(--ink); }
+/* Draw − and + as lines so they sit dead center on every device (font glyphs and iOS button padding pushed them off) */
+.stepper button::before, .stepper button:last-of-type::after { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 2px; border-radius: 1px; background: currentColor; transform: translate(-50%, -50%); }
+.stepper button:last-of-type::after { width: 2px; height: 12px; }
 .stepper .n { min-width: 2.2ch; text-align: center; font-weight: 700; }
 
 /* Controls */
