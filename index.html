@@ -267,6 +267,18 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .pay-chip .nm small { color: var(--muted); font-weight: 500; margin-left: 4px; }
 .pay-chip .x { border: 0; background: none; width: 32px; height: 32px; font-size: 1.05rem; color: var(--muted); }
 .pay-add { display: flex; gap: 8px; }
+.venmo-set { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.venmo-set h3 { margin: 0 0 4px; font-size: 1rem; }
+/* Venmo pay QR (in a sale) */
+.venmo-row { margin-top: 10px; }
+.venmo-row .btn { display: inline-flex; align-items: center; gap: 8px; }
+.venmo-row p { margin: 0; color: var(--muted); font-size: .85rem; }
+.venmo-body { flex: 1; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 8px 16px 20px; text-align: center; }
+.venmo-body .qr { width: min(78vw, 52vh, 420px); height: auto; aspect-ratio: 1; border-radius: 12px; background: #fff; }
+.venmo-body .amt { font-family: var(--font-display); font-weight: 600; font-size: 2.2rem; line-height: 1; }
+.venmo-body .who { font-weight: 600; }
+.venmo-body .what { color: var(--muted); font-size: .9rem; max-width: 36em; }
+.venmo-body .hint { color: var(--muted); font-size: .85rem; max-width: 30em; }
 
 /* Sale lines (one per plushie) */
 .line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; margin-bottom: 8px; }
@@ -443,6 +455,37 @@ import {
   // ---------- Payment methods ----------
   // The first method in the list is the default on a new sale
   const payMethods = () => (Array.isArray(state.settings.paymentMethods) && state.settings.paymentMethods.length ? state.settings.paymentMethods : DEFAULT_PAY);
+  // Venmo: she can't be charged through Venmo by an app, so a sale shows a QR code the buyer scans.
+  // It opens Venmo on their phone with her name, the amount and a note filled in. (This link format is
+  // the one Venmo has long used for pay links but has never formally documented; if it ever stops filling
+  // in the amount, the buyer can still type it.)
+  const venmoUser = () => String(state.settings.venmoUser || "").replace(/^@/, "");
+  const isVenmo = (m) => /venmo/i.test(m || "");
+  const venmoLink = (amount, note) => "https://venmo.com/?txn=pay&audience=private&recipients=" + encodeURIComponent(venmoUser())
+    + "&amount=" + amount.toFixed(2) + "&note=" + encodeURIComponent(note);
+  async function showVenmoQR(amount, note) {
+    const ov = document.createElement("div");
+    ov.className = "picker-ov";
+    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="Venmo pay code">
+      <div class="picker-head"><h3>Scan to pay with Venmo</h3><button type="button" class="btn ghost small" data-close>Done</button></div>
+      <div class="venmo-body">
+        <svg class="qr" viewBox="-6 -6 112 112" role="img" aria-label="QR code to pay ${esc(fmt(amount))} on Venmo"><rect x="-6" y="-6" width="112" height="112" fill="#fff"/></svg>
+        <div class="amt num">${fmt(amount)}</div>
+        <div class="who">to @${esc(venmoUser())}</div>
+        ${note ? `<div class="what">${esc(note)}</div>` : ""}
+        <div class="hint">The buyer points their phone camera at the code and pays in Venmo. Wait for your Venmo notification, then tap Done and Save sale.</div>
+      </div>
+    </div>`;
+    document.getElementById("sheet-root").appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-close]")) ov.remove(); });
+    const svg = ov.querySelector(".qr");
+    try {
+      await loadScript(QR_LIB);
+      svg.insertAdjacentHTML("beforeend", `<path fill="#000" shape-rendering="crispEdges" d="${qrPath(venmoLink(amount, note), 0, 0, 100)}"/>`);
+    } catch (e) {
+      svg.outerHTML = `<p class="hint">Couldn't make the QR code without a connection. Ask the buyer to pay <b>@${esc(venmoUser())}</b> in Venmo.</p>`;
+    }
+  }
   function payBreakdown(list) {
     const m = new Map();
     for (const s of list) { const k = s.payment || "Not recorded"; m.set(k, round2((m.get(k) || 0) + (s.total || 0))); }
@@ -1057,6 +1100,11 @@ import {
           <button class="nm" type="button" data-pay-first="${esc(m)}" ${i ? "" : "disabled"}>${esc(m)}${i ? "" : "<small>default</small>"}</button>
           <button class="x" type="button" data-pay-remove="${esc(m)}" aria-label="Remove ${esc(m)}">×</button></span>`).join("")}</div>
         <form class="pay-add" id="pay-add"><input id="pay-new" placeholder="e.g. Venmo, Square, Check" autocomplete="off" aria-label="New payment method"><button class="btn small" type="submit">Add</button></form>
+        <div class="venmo-set">
+          <h3>Venmo pay code</h3>
+          <p class="sub" style="margin:0 0 10px;color:var(--muted);font-size:.85rem">Your Venmo username. When a sale is paid with Venmo, you can show the buyer a QR code with the amount filled in.</p>
+          <form class="pay-add" id="venmo-form"><input id="venmo-user" value="${esc(venmoUser() ? "@" + venmoUser() : "")}" placeholder="@your-venmo-name" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Venmo username"><button class="btn small" type="submit">Save</button></form>
+        </div>
       </section>`;
   }
 
@@ -1322,6 +1370,7 @@ import {
           ${[...payMethods(), ...(head.payment && !payMethods().includes(head.payment) ? [head.payment] : [])]
             .map((m) => `<button type="button" role="radio" data-pay="${esc(m)}" aria-checked="${m === head.payment}">${esc(m)}</button>`).join("")}
         </div>
+        <div class="venmo-row" id="s-venmo" hidden></div>
       </div>
       <form id="sform" class="fgrid" novalidate>
         <label class="f full">Event<select id="s-event">${evSelect}</select></label>
@@ -1341,7 +1390,25 @@ import {
         const units = lines.reduce((n, ln) => n + ln.qty, 0);
         $("#s-total").textContent = fmt(lines.reduce((n, ln) => n + lineTotal(ln), 0));
         $("#s-count").textContent = units > 1 ? `Total · ${units} plushies` : "Total";
+        updVenmo();
       };
+      const saleTotal = () => round2(lines.reduce((n, ln) => n + lineTotal(ln), 0));
+      const saleNote = () => lines.map((ln) => {
+        const p = productById(ln.productId), name = ln.productId === "__new" ? ln.newName.trim() : p ? p.name : ln.productName || "";
+        return name ? name + (ln.qty > 1 ? ` x${ln.qty}` : "") : "";
+      }).filter(Boolean).join(", ").slice(0, 120);
+      const updVenmo = () => {
+        const row = $("#s-venmo"); if (!row) return;
+        row.hidden = !isVenmo(payment);
+        if (row.hidden) return;
+        if (!venmoUser()) { row.innerHTML = `<p>To show a Venmo pay code, add your Venmo username under Sales → Payment methods.</p>`; return; }
+        const t = saleTotal();
+        row.innerHTML = `<button type="button" class="btn ghost small" id="s-venmo-qr" ${t > 0 ? "" : "disabled"}>
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1h5v5H1zM8 1h5v5H8zM1 8h5v5H1zM8 8h2v2H8zM11 11h2v2h-2zM11 8h2v2h-2zM8 11h2v2H8z" fill="currentColor"/></svg>
+          ${t > 0 ? `Show Venmo code · ${fmt(t)}` : "Enter prices to show the Venmo code"}</button>`;
+        if (t > 0) loadScript(QR_LIB).catch(() => {}); // get it ready before she taps
+      };
+      let payment = head.payment;
       const renderLines = () => { box.innerHTML = lines.map(lineHTML).join(""); updTotal(); };
       renderLines();
       const lineOf = (t) => { const d = t.closest(".line"); return d ? [lines[+d.dataset.i], d] : [null, null]; };
@@ -1370,12 +1437,13 @@ import {
           d.querySelector(".n").textContent = ln.qty; d.querySelector(".l-sub").textContent = fmt(lineTotal(ln)); updTotal();
         }
       });
-      let payment = head.payment;
       $("#s-pay").addEventListener("click", (e) => {
         const b = e.target.closest("[data-pay]"); if (!b) return;
         payment = b.dataset.pay;
         $("#s-pay").querySelectorAll("[data-pay]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+        updVenmo();
       });
+      $("#s-venmo").addEventListener("click", (e) => { if (e.target.closest("#s-venmo-qr")) showVenmoQR(saleTotal(), saleNote()); });
       // Each scan adds that plushie at its default price, or one more if it's already in the sale
       $("#s-scan").addEventListener("click", () => openScanner("Scan plushie tags", (code) => {
         const p = productByBarcode(code);
@@ -1996,6 +2064,16 @@ import {
   });
   view.addEventListener("input", (e) => { if (e.target.id === "q") { state.search = e.target.value; render(); } });
   // Payment methods manager (Sales tab)
+  view.addEventListener("submit", (e) => {
+    if (e.target.id !== "venmo-form") return;
+    e.preventDefault();
+    const user = document.getElementById("venmo-user").value.trim().replace(/^@/, "");
+    if (user && !/^[A-Za-z0-9_-]{2,30}$/.test(user)) { toast("A Venmo username is letters, numbers, - and _ (no spaces)."); return; }
+    const changes = { venmoUser: user };
+    if (user && !payMethods().some(isVenmo)) changes.paymentMethods = [...payMethods(), "Venmo"];
+    api.saveSettings(changes);
+    toast(user ? `Saved @${user}${changes.paymentMethods ? " and added Venmo to payment methods" : ""}` : "Venmo username removed");
+  });
   view.addEventListener("submit", (e) => {
     if (e.target.id !== "pay-add") return;
     e.preventDefault();
