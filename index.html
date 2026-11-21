@@ -272,6 +272,34 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .line { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 8px; margin-bottom: 8px; }
 .line-top { display: flex; gap: 8px; align-items: center; }
 .line-top select { flex: 1; min-width: 0; }
+/* Plushie picker: a button showing the chosen plushie's photo, opening a searchable list with photos */
+.l-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 6px 12px 6px 8px; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-weight: 600; }
+.l-pick.empty { padding-left: 12px; font-weight: 500; color: var(--muted); }
+.l-pick .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-pick .nm small { font-weight: 500; color: var(--muted); font-size: .85em; }
+.l-pick .thumb { border-radius: 8px; width: 36px; height: 36px; }
+.l-pick::after { content: ""; flex: none; width: 8px; height: 8px; margin: 0 4px 4px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); }
+.pick-plus { flex: none; width: 48px; height: 48px; border-radius: 10px; border: 2px dashed var(--line); display: grid; place-items: center; font-size: 1.4rem; color: var(--accent); }
+.pick-plus.sm { width: 36px; height: 36px; border-radius: 8px; font-size: 1.1rem; }
+.picker-ov { position: fixed; inset: 0; z-index: 25; background: rgba(20,14,26,.45); display: flex; align-items: flex-end; justify-content: center; }
+.picker { background: var(--surface); width: 100%; max-width: 520px; height: calc(100% - 10px - env(safe-area-inset-top, 0px)); border-radius: 20px 20px 0 0;
+  display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom, 0px); }
+@media (min-width: 640px) { .picker-ov { align-items: center; } .picker { border-radius: 20px; max-width: 720px; height: 94%; } }
+@media (min-width: 640px) and (pointer: coarse) {
+  .picker { width: calc(100% - 24px); max-width: 960px; height: calc(100% - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+}
+.picker-head { display: flex; align-items: center; gap: 10px; padding: 18px 16px 10px; }
+.picker-head h3 { flex: 1; margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; }
+.picker-search { padding: 0 16px 10px; }
+.picker-list { flex: 1; overflow: auto; padding: 0 8px 12px; }
+.pick-row { display: flex; width: 100%; align-items: center; gap: 12px; padding: 8px; min-height: 64px; border: 0; border-radius: 12px; background: none; text-align: left; }
+.pick-row:hover, .pick-row[aria-selected="true"] { background: var(--bg); }
+.pick-row .thumb { width: 48px; height: 48px; border-radius: 10px; }
+.pick-row .swatch { width: 40px; height: 40px; margin: 4px; }
+.pick-row .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.pick-row .meta { display: block; font-size: .82rem; font-weight: 500; color: var(--muted); }
+.pick-none { margin: 8px; color: var(--muted); }
 .l-remove { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 1.2rem; line-height: 1; flex: none; }
 .line-bottom { display: flex; align-items: center; gap: 8px; }
 .l-price { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--muted); font-weight: 600; }
@@ -1042,7 +1070,44 @@ import {
     const first = root.querySelector("input:not(.vh), select, textarea"); if (first && window.innerWidth > 640) first.focus();
   }
   function closeSheet() { document.getElementById("sheet-root").innerHTML = ""; }
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const picker = document.querySelector(".picker-ov");
+    if (picker) picker.remove(); else closeSheet();
+  });
+
+  // Searchable plushie list with photos, over the sale popup. onPick(id) gets a product id or "__new".
+  function pickProduct(products, currentId, onPick) {
+    const ov = document.createElement("div");
+    ov.className = "picker-ov";
+    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="Choose a plushie">
+      <div class="picker-head"><h3>Choose a plushie</h3><button type="button" class="btn ghost small" data-close>Close</button></div>
+      <div class="picker-search"><input type="search" placeholder="Search ${products.length} plushie${products.length === 1 ? "" : "s"}" aria-label="Search plushies" autocomplete="off"></div>
+      <div class="picker-list"></div>
+    </div>`;
+    document.getElementById("sheet-root").appendChild(ov);
+    const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
+    const row = (p) => `<button type="button" class="pick-row" data-id="${esc(p.id)}" aria-selected="${p.id === currentId}">${avatar(p.photo, p.color)}
+      <span class="nm">${esc(p.name)}<span class="meta">${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${p.stock || 0} left</span></span></button>`;
+    const draw = () => {
+      const t = q.value.trim().toLowerCase();
+      const hits = t ? products.filter((p) => (p.name || "").toLowerCase().includes(t)) : products;
+      list.innerHTML = hits.map(row).join("")
+        + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(q.value.trim())}”.</p>`)
+        + `<button type="button" class="pick-row" data-id="__new"><span class="pick-plus" aria-hidden="true">+</span>
+            <span class="nm">New plushie…<span class="meta">One that isn't in Products yet</span></span></button>`;
+    };
+    draw();
+    q.addEventListener("input", draw);
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
+      const b = e.target.closest(".pick-row"); if (!b) return;
+      ov.remove(); onPick(b.dataset.id);
+    });
+    const cur = list.querySelector('[aria-selected="true"]'); if (cur) cur.scrollIntoView({ block: "center" });
+    // Only jump to the search box with a mouse and keyboard; on a phone or iPad the keyboard would cover the list
+    if (matchMedia("(pointer: fine)").matches) q.focus();
+  }
 
   function armDelete(btn, label, fn) {
     btn.addEventListener("click", async () => {
@@ -1225,12 +1290,14 @@ import {
 
     const lineTotal = (ln) => round2(ln.qty * (Number(ln.price) || 0));
     const lineHTML = (ln, i) => {
-      const missing = ln.productId && ln.productId !== "__new" && !productById(ln.productId)
-        ? `<option value="${esc(ln.productId)}" selected>${esc(ln.productName || "Plushie")} (not in Products)</option>` : "";
-      const opts = products.map((p) => `<option value="${esc(p.id)}" ${p.id === ln.productId ? "selected" : ""}>${esc(p.name)} (${p.stock || 0} left)</option>`).join("");
+      const p = ln.productId && ln.productId !== "__new" ? productById(ln.productId) : null;
+      const face = ln.productId === "__new" ? `<span class="pick-plus sm" aria-hidden="true">+</span><span class="nm">New plushie</span>`
+        : p ? `${avatar(p.photo, p.color)}<span class="nm">${esc(p.name)} <small>(${p.stock || 0} left)</small></span>`
+        : ln.productId ? `${avatar("", ln.color)}<span class="nm">${esc(ln.productName || "Plushie")} <small>(not in Products)</small></span>`
+        : `<span class="nm">Choose a plushie…</span>`;
       return `<div class="line" data-i="${i}">
         <div class="line-top">
-          <select class="l-product" aria-label="Plushie">${products.length ? `<option value="" ${ln.productId ? "" : "selected"}>Choose a plushie…</option>` : ""}${missing}${opts}<option value="__new" ${ln.productId === "__new" ? "selected" : ""}>+ New plushie…</option></select>
+          <button type="button" class="l-product l-pick${ln.productId ? "" : " empty"}" aria-haspopup="dialog">${face}</button>
           ${lines.length > 1 ? `<button type="button" class="l-remove" aria-label="Remove this plushie">×</button>` : ""}
         </div>
         ${ln.productId === "__new" ? `<input class="l-newname" autocomplete="off" placeholder="New plushie's name" value="${esc(ln.newName)}" aria-label="New plushie name">` : ""}
@@ -1279,15 +1346,14 @@ import {
       renderLines();
       const lineOf = (t) => { const d = t.closest(".line"); return d ? [lines[+d.dataset.i], d] : [null, null]; };
 
-      box.addEventListener("change", (e) => {
-        if (!e.target.matches(".l-product")) return;
-        const [ln, d] = lineOf(e.target), i = +d.dataset.i;
-        ln.productId = e.target.value;
-        const p = productById(ln.productId);
+      const choose = (i) => pickProduct(products, lines[i].productId, (id) => {
+        const ln = lines[i]; if (!ln) return;
+        ln.productId = id;
+        const p = productById(id);
         if (p) ln.price = p.price || p.price === 0 ? p.price : ""; // default price, which she can type over
         renderLines();
         const row = box.querySelectorAll(".line")[i];
-        if (ln.productId === "__new") row.querySelector(".l-newname").focus();
+        if (id === "__new") row.querySelector(".l-newname").focus();
       });
       box.addEventListener("input", (e) => {
         const [ln, d] = lineOf(e.target); if (!ln) return;
@@ -1297,6 +1363,7 @@ import {
       box.addEventListener("click", (e) => {
         const [ln, d] = lineOf(e.target); if (!ln) return;
         if (e.target.closest(".l-remove")) { lines.splice(+d.dataset.i, 1); renderLines(); return; }
+        if (e.target.closest(".l-pick")) { choose(+d.dataset.i); return; }
         const step = e.target.closest(".l-minus") ? -1 : e.target.closest(".l-plus") ? 1 : 0;
         if (step) {
           ln.qty = Math.max(1, ln.qty + step);
@@ -1328,8 +1395,8 @@ import {
       }));
       $("#s-addline").addEventListener("click", () => {
         lines.push(blankLine()); renderLines();
-        const sel = box.querySelectorAll(".l-product")[lines.length - 1]; sel.focus();
-        sel.scrollIntoView({ block: "nearest" });
+        box.querySelectorAll(".line")[lines.length - 1].scrollIntoView({ block: "nearest" });
+        if (products.length) choose(lines.length - 1);
       });
 
       $("#s-event").addEventListener("change", () => {
