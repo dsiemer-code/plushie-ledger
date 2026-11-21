@@ -70,6 +70,9 @@ header {
 .head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 14px 10px; }
 h1 { font-family: var(--font-display); font-weight: 600; font-size: 1.45rem; margin: 0; letter-spacing: .01em; display: flex; align-items: center; gap: 8px; }
 h1 svg { flex: none; }
+h1 .title-stack { display: flex; flex-direction: column; line-height: 1.15; }
+h1 .ver { font-family: var(--font-body); font-size: .68rem; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+h1 .ver:empty { display: none; }
 .sync { font-size: .78rem; color: var(--muted); }
 nav.tabs { display: flex; gap: 4px; padding-block: 0 10px; }
 nav.tabs button {
@@ -295,8 +298,19 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
     <div class="head-row">
       <h1>
         <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11" fill="var(--accent)"/><path d="M5 10c4 2 12 2 16 0M4 14c5 2.5 13 2.5 18 0M6 18.5c4 1.6 10 1.6 14 0M10 3c-2 5-2 15 1 20M16 3c2 5 2 15-1 20" stroke="var(--surface)" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
-        Plushie Ledger
+        <span class="title-stack">Plushie Ledger<span class="ver" id="app-ver"></span></span>
       </h1>
+      <script>
+        // Version = when this copy of the page was published (GitHub Pages sends it as Last-Modified), in local time.
+        // It changes by itself on every update, so there's nothing to bump by hand.
+        (function () {
+          var d = new Date(document.lastModified); if (isNaN(d)) return;
+          var p = function (n) { return String(n).padStart(2, "0"); };
+          var el = document.getElementById("app-ver");
+          el.textContent = "v" + d.getFullYear() + "." + p(d.getMonth() + 1) + "." + p(d.getDate()) + "." + p(d.getHours()) + p(d.getMinutes());
+          el.title = "Last updated " + d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        })();
+      </script>
       <div class="head-right">
         <span class="sync" id="sync">Loading…</span>
         <button class="linkbtn" id="signout" type="button" hidden>Sign out</button>
