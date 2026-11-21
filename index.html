@@ -321,6 +321,8 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .l-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 6px 12px 6px 8px; text-align: left;
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px; font-weight: 600; }
 .l-pick.empty { padding-left: 12px; font-weight: 500; color: var(--muted); }
+.l-pick.filter-pick { flex: 1 1 160px; }
+.l-pick.filter-pick.empty { color: var(--ink); }
 .l-pick .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .l-pick .nm small { font-weight: 500; color: var(--muted); font-size: .85em; }
 .l-pick .thumb { border-radius: 8px; width: 36px; height: 36px; }
@@ -1293,17 +1295,19 @@ import {
     const list = state.sales.filter((s) => (!fp || s.productId === fp) && (!fe || s.eventId === fe));
     const groups = new Map();
     for (const s of list) { const k = monthKey(s.date); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
-    const opts = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""))
-      .map((p) => `<option value="${esc(p.id)}" ${p.id === fp ? "selected" : ""}>${esc(p.name)}</option>`).join("");
     const evOpts = state.events.slice().sort((a, b) => b.start.localeCompare(a.start))
       .map((ev) => `<option value="${esc(ev.id)}" ${ev.id === fe ? "selected" : ""}>${esc(ev.name)}</option>`).join("");
     const allRev = list.reduce((n, s) => n + (s.total || 0), 0), allUnits = list.reduce((n, s) => n + (s.qty || 0), 0);
     return `
       <section class="panel">
         <div class="toolbar">
-          <select id="filter-product" aria-label="Show sales for plushie" style="flex:1 1 160px">
-            <option value="">All plushies</option>${opts}
-          </select>
+          ${(() => {
+            const p = fp && productById(fp);
+            const face = !fp ? `<span class="nm">All plushies</span>`
+              : p ? `${avatar(p.photo, p.color)}<span class="nm">${esc(p.name)}</span>`
+              : `<span class="nm">${esc((state.sales.find((x) => x.productId === fp) || {}).productName || "Plushie")}</span>`;
+            return `<button type="button" class="l-pick filter-pick${fp ? "" : " empty"}" data-act="filter-product-pick" aria-haspopup="dialog" aria-label="Show sales for plushie">${face}</button>`;
+          })()}
           ${state.events.length ? `<select id="filter-event" aria-label="Show sales at event" style="flex:1 1 160px">
             <option value="">All events</option>${evOpts}
           </select>` : ""}
@@ -1353,18 +1357,23 @@ import {
   });
 
   // Searchable plushie list with photos, over the sale popup. onPick(id) gets a product id or "__new".
-  function pickProduct(products, currentId, onPick) {
+  // filter: true turns it into a "show sales for" chooser: an "All plushies" row instead of "New plushie", and sold counts
+  function pickProduct(products, currentId, onPick, { filter = false } = {}) {
+    const title = filter ? "Show sales for" : "Choose a plushie";
+    const sold = filter ? soldByProduct() : null;
     const ov = document.createElement("div");
     ov.className = "picker-ov";
-    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="Choose a plushie">
-      <div class="picker-head"><h3>Choose a plushie</h3><button type="button" class="btn ghost small" data-close>Close</button></div>
+    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="${title}">
+      <div class="picker-head"><h3>${title}</h3><button type="button" class="btn ghost small" data-close>Close</button></div>
       <div class="picker-search"><input type="search" placeholder="Search ${products.length} plushie${products.length === 1 ? "" : "s"}" aria-label="Search plushies" autocomplete="off"></div>
       <div class="picker-list"></div>
     </div>`;
     document.getElementById("sheet-root").appendChild(ov);
     const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
     const row = (p) => `<button type="button" class="pick-row" data-id="${esc(p.id)}" aria-selected="${p.id === currentId}">${avatar(p.photo, p.color)}
-      <span class="nm">${esc(p.name)}<span class="meta">${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${p.stock || 0} left</span></span></button>`;
+      <span class="nm">${esc(p.name)}<span class="meta">${filter ? `${(sold.get(p.id) || { units: 0 }).units} sold · ` : ""}${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${p.stock || 0} left</span></span></button>`;
+    const allRow = () => `<button type="button" class="pick-row pick-new" data-id="" aria-selected="${!currentId}"><span class="pick-plus" aria-hidden="true">★</span>
+      <span class="nm">All plushies<span class="meta">Show every sale</span></span></button>`;
     // Something she made at the booth: sell it straight away; saving the sale adds it to Products
     const newRow = (name) => `<button type="button" class="pick-row pick-new" data-id="__new" data-name="${esc(name)}"><span class="pick-plus" aria-hidden="true">+</span>
       <span class="nm">${name ? `Sell “${esc(name)}” as a new plushie` : "New plushie (not in Products yet)"}<span class="meta">${name ? "Enter its price next. It's added to Products when you save the sale" : "Made at the booth? Type its name and price. It's added to Products when you save the sale"}</span></span></button>`;
@@ -1372,7 +1381,7 @@ import {
       const typed = q.value.trim(), t = typed.toLowerCase();
       const hits = t ? products.filter((p) => (p.name || "").toLowerCase().includes(t)) : products;
       const exact = hits.some((p) => (p.name || "").trim().toLowerCase() === t);
-      list.innerHTML = (exact ? "" : newRow(typed))
+      list.innerHTML = (filter ? (typed ? "" : allRow()) : exact ? "" : newRow(typed))
         + hits.map(row).join("")
         + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(typed)}”.</p>`);
     };
@@ -2323,6 +2332,10 @@ import {
     if (t.closest("[data-act='clear-examples']")) return clearExamples();
     if (t.closest("[data-act='csv']")) return downloadCSV();
     if (t.closest("[data-act='import']")) return importSheet();
+    if (t.closest("[data-act='filter-product-pick']")) {
+      const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      return pickProduct(products, state.filterProduct, (id) => { state.filterProduct = id; render(); window.scrollTo(0, 0); }, { filter: true });
+    }
     if (t.closest("[data-act='new-event']")) return eventSheet();
     if (t.closest("[data-act='print-tags']")) return tagSheet();
     const ta = t.closest("[data-tag-add]");
