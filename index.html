@@ -574,9 +574,12 @@ import {
     const r = squareResult; squareResult = null;
     const orig = orderSales(r.orderId);
     const mark = r.ok ? { squareStatus: "paid", squarePaid: true, ...(r.txn ? { squareTxn: r.txn } : {}) } : { squareStatus: "failed", squareError: r.error || "unknown" };
-    for (const x of orig) api.patchSale(x.id, mark);
-    if (r.here) squareOutcome(orig, r.ok, r.error, r.cents);
-    else squareLanding(orig.length ? "saved" : "missing");
+    if (r.here) { for (const x of orig) api.patchSale(x.id, mark); squareOutcome(orig, r.ok, r.error, r.cents); return; }
+    if (!orig.length) { squareLanding("missing"); return; }
+    // In Safari: wait until the server has the result before saying so (and before the tab closes itself)
+    Promise.all(orig.map((x) => (fs ? updateDoc(ref("sales", x.id), mark) : api.patchSale(x.id, mark))))
+      .then(() => squareLanding("saved"))
+      .catch((e) => { console.error(e); squareLanding("failed"); });
   }
   // Opened in Safari by Square while she was using the home-screen app: say what happened and send her back
   function squareLanding(phase) {
@@ -589,17 +592,21 @@ import {
         <h2 id="sq-title">${r.ok ? `Paid in Square${r.cents ? ` · ${fmt(r.cents / 100)}` : ""}` : "Square payment didn't go through"}</h2>
         <p>${r.ok ? "" : esc(squareWhy(r.error)) + " "}Now go back to <b>Plushie Ledger</b>: swipe up from the bottom of the screen and tap it.${r.ok ? "" : " The sale will open there so you can change or delete it."}</p>
         <p class="sq-status" id="sq-status">Updating the ledger…</p>
-        <button type="button" class="btn ghost small" id="sq-close">Close this message</button>
+        <button type="button" class="btn ghost small" id="sq-close">Close this tab</button>
       </div>`;
       document.body.appendChild(ov);
-      ov.querySelector("#sq-close").addEventListener("click", () => ov.remove());
+      // A tab another app opened can usually close itself; if Safari refuses, just hide the message
+      ov.querySelector("#sq-close").addEventListener("click", () => { window.close(); setTimeout(() => ov.remove(), 300); });
     }
     const msg = {
-      saved: "Recorded in the ledger. You can close this Safari tab.",
+      saved: "Recorded in the ledger. This tab closes by itself.",
       missing: "Couldn't find the sale here yet. It's still saved in the app.",
+      failed: "Couldn't update the ledger from here. The sale is still saved; check how it was paid in the app.",
       signin: "Safari isn't signed in to the ledger, so the app won't show this result. The sale is still saved. Sign in once in Safari (close this message) so next time it updates by itself.",
     }[phase];
     if (msg) ov.querySelector("#sq-status").textContent = msg;
+    // Square opens a new Safari tab every time; once the result is recorded, close it so they don't pile up
+    if (phase === "saved" || phase === "missing") setTimeout(() => window.close(), 2500);
   }
   const squareLandingResult = squareResult && !squareResult.here ? squareResult : null;
   if (squareLandingResult) squareLanding("start");
