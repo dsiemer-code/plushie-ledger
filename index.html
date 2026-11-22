@@ -408,8 +408,20 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .salerow { cursor: pointer; }
 .salerow:hover .title { color: var(--accent); }
 
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 30;
-  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: .9rem; max-width: calc(100% - 32px); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 48;
+  display: flex; align-items: center; gap: 10px; width: max-content; max-width: calc(100% - 32px);
+  background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: .9rem; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+/* Saves get a big green confirmation so it's obvious they worked; problems get amber, failures red */
+.toast.ok, .toast.warn, .toast.err { font-size: 1.05rem; padding: 14px 22px 14px 14px; border-radius: 18px; color: #fff; }
+.toast.ok { background: #2E8B57; }
+.toast.warn { background: #B8650F; }
+.toast.err { background: #C0392B; }
+.toast .ti { flex: none; width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.95); display: grid; place-items: center; font-size: 1.05rem; font-weight: 800; }
+.toast.ok .ti { color: #2E8B57; } .toast.warn .ti { color: #B8650F; } .toast.err .ti { color: #C0392B; }
+@media (prefers-reduced-motion: no-preference) {
+  .toast:not([hidden]) { animation: toastIn .28s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes toastIn { from { transform: translateX(-50%) translateY(16px) scale(.9); opacity: 0; } }
+}
 @media (prefers-reduced-motion: no-preference) {
   .sheet { animation: up .22s ease-out; }
   @keyframes up { from { transform: translateY(24px); opacity: .6; } }
@@ -468,7 +480,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
   Record sale
 </button>
 <div id="sheet-root"></div>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script type="module">
 import { firebaseConfig } from "./firebase-config.js";
@@ -630,9 +642,9 @@ import {
   // React to a Square result for a sale this copy of the app started
   function squareOutcome(orig, ok, error, cents) {
     const total = orig.length ? orig.reduce((n, x) => n + (x.total || 0), 0) : (cents || 0) / 100;
-    if (ok) { toast(`Paid in Square · ${fmt(total)} · sale saved`); return; }
-    if (orig.length) { saleSheet(orig); toast(`${squareWhy(error)} The sale is still recorded: change how it was paid, charge again, or delete it.`); }
-    else toast(squareWhy(error));
+    if (ok) { toast(`Paid in Square · ${fmt(total)} · sale saved`, "ok"); return; }
+    if (orig.length) { saleSheet(orig); toast(`${squareWhy(error)} The sale is still recorded: change how it was paid, charge again, or delete it.`, "warn"); }
+    else toast(squareWhy(error), "warn");
   }
 
   // What Square sent back, read once at startup and acted on when the sales have loaded
@@ -834,10 +846,14 @@ import {
   }
 
   let toastTimer;
-  function toast(msg) {
+  // kind: "ok" (something saved/done: green ✓), "warn" (something to fix: amber !), "err" (it failed: red ✕)
+  function toast(msg, kind = "") {
     const t = document.getElementById("toast");
-    t.textContent = msg; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 2600);
+    t.className = "toast" + (kind ? " " + kind : "");
+    t.innerHTML = (kind ? `<span class="ti" aria-hidden="true">${kind === "ok" ? "✓" : kind === "err" ? "✕" : "!"}</span>` : "") + `<span>${esc(msg)}</span>`;
+    t.hidden = true; void t.offsetWidth; t.hidden = false; // restart the pop-in for back-to-back messages
+    if (kind === "ok" && navigator.vibrate) navigator.vibrate(30);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), kind === "err" ? 5000 : kind === "warn" ? 4000 : kind === "ok" ? 3200 : 2600);
   }
 
   // ---------- Data layer ----------
@@ -850,11 +866,11 @@ import {
     try {
       promiseFn().catch((e) => {
         console.error(e);
-        if (e && e.code === "permission-denied") toast("This account can't change the ledger.");
-        else toast("That didn't save. Try again in a moment.");
+        if (e && e.code === "permission-denied") toast("This account can't change the ledger.", "err");
+        else toast("That didn't save. Try again in a moment.", "err");
       });
       return true;
-    } catch (e) { console.error(e); toast("That didn't save. Try again in a moment."); return false; }
+    } catch (e) { console.error(e); toast("That didn't save. Try again in a moment.", "err"); return false; }
   }
   const ref = (col, id) => doc(fs, "users", uidPath, col, id);
   const api = {
@@ -981,7 +997,7 @@ import {
       if (!user) { uidPath = null; setSync(""); showApp(false); if (squareLandingResult) squareLanding("signin"); return; }
       uidPath = user.uid;
       showApp(true); render();
-      const onErr = (e) => { console.error(e); setSync("Can't load"); toast("Couldn't load the ledger. Check the Firestore rules in the setup guide."); };
+      const onErr = (e) => { console.error(e); setSync("Can't load"); toast("Couldn't load the ledger. Check the Firestore rules in the setup guide.", "err"); };
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "products"), { includeMetadataChanges: true }, (snap) => {
         state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         state.loaded.p = true; setSync(syncLabel(snap)); render();
@@ -1488,7 +1504,7 @@ import {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = $("#y-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG."); }
+        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; drawPhoto();
       });
       $("#y-cancel").addEventListener("click", closeSheet);
@@ -1500,12 +1516,12 @@ import {
           cost: round2($("#y-cost").value), qty: Math.max(0, parseInt($("#y-qty").value, 10) || 0),
           notes: $("#y-notes").value.trim(), createdAt: y.createdAt || Date.now(),
         };
-        if (!data.name && !data.brand && !data.color) { $("#y-title").focus(); toast("Give the yarn a name, brand or color."); return; }
+        if (!data.name && !data.brand && !data.color) { $("#y-title").focus(); toast("Give the yarn a name, brand or color.", "warn"); return; }
         if (photo) data.photo = photo;
-        if (await api.saveYarn(y.id || uid(), data)) { closeSheet(); toast(isNew ? "Yarn added" : "Saved"); }
+        if (await api.saveYarn(y.id || uid(), data)) { closeSheet(); toast(isNew ? "Yarn added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete($("#y-del"), "Delete", async () => {
-        if (await api.deleteYarn(y.id)) { closeSheet(); toast("Yarn deleted"); }
+        if (await api.deleteYarn(y.id)) { closeSheet(); toast("Yarn deleted", "ok"); }
       });
     }, { big: true });
   }
@@ -1790,8 +1806,8 @@ import {
       el.querySelector("#p-bc-rm").addEventListener("click", () => { bcIn.value = ""; showBarcode(); });
       el.querySelector("#p-bc-scan").addEventListener("click", () => openScanner("Scan this plushie's tag", (code) => {
         const other = productByBarcode(code);
-        if (other && other.id !== p.id) { toast(`That barcode is already on ${other.name}.`); return; }
-        bcIn.value = code; showBarcode(); toast(`Barcode ${code} added`);
+        if (other && other.id !== p.id) { toast(`That barcode is already on ${other.name}.`, "warn"); return; }
+        bcIn.value = code; showBarcode(); toast(`Barcode ${code} added`, "ok");
       }, { once: true }));
       el.querySelector("#p-photo-btn").addEventListener("click", () => el.querySelector("#p-file").click());
       el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; showPhoto(); });
@@ -1799,7 +1815,7 @@ import {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = el.querySelector("#p-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG."); }
+        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; showPhoto();
       });
       el.querySelector("#p-colors").addEventListener("click", (e) => {
@@ -1811,12 +1827,12 @@ import {
       el.querySelector("#pform").addEventListener("submit", async (e) => {
         e.preventDefault();
         const name = el.querySelector("#p-title").value.trim();
-        if (!name) { el.querySelector("#p-title").focus(); toast("Give the plushie a name."); return; }
+        if (!name) { el.querySelector("#p-title").focus(); toast("Give the plushie a name.", "warn"); return; }
         const barcode = bcIn.value.trim();
         const clash = barcode && productByBarcode(barcode);
-        if (clash && clash.id !== p.id) { bcIn.focus(); toast(`That barcode is already on ${clash.name}.`); return; }
+        if (clash && clash.id !== p.id) { bcIn.focus(); toast(`That barcode is already on ${clash.name}.`, "warn"); return; }
         const pattern = cleanUrl(el.querySelector("#p-pattern").value);
-        if (pattern === null) { el.querySelector("#p-pattern").focus(); toast("That pattern link doesn't look like a web address."); return; }
+        if (pattern === null) { el.querySelector("#p-pattern").focus(); toast("That pattern link doesn't look like a web address.", "warn"); return; }
         const data = {
           name,
           price: round2(el.querySelector("#p-price").value),
@@ -1836,10 +1852,10 @@ import {
         const keep = (Array.isArray(p.yarns) ? p.yarns : []).filter((u) => !yarnById(u.yarnId));
         data.yarns = [...yarns.map((u) => ({ yarnId: u.yarnId, amount: +u.amount > 0 ? round2(u.amount) : 0 })), ...keep];
         const ok = await api.saveProduct(p.id || uid(), data);
-        if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
+        if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete(el.querySelector("#p-del"), "Delete", async () => {
-        if (await api.deleteProduct(p.id)) { closeSheet(); toast("Plushie deleted. Its past sales stay in your history."); }
+        if (await api.deleteProduct(p.id)) { closeSheet(); toast("Plushie deleted. Its past sales stay in your history.", "ok"); }
       });
     }, { big: true });
   }
@@ -1900,16 +1916,16 @@ import {
       $("#eform").addEventListener("submit", async (e) => {
         e.preventDefault();
         const name = $("#e-title").value.trim();
-        if (!name) { $("#e-title").focus(); toast("Give the event a name."); return; }
+        if (!name) { $("#e-title").focus(); toast("Give the event a name.", "warn"); return; }
         let start = $("#e-start").value || todayStr(), end = $("#e-end").value || start;
         if (end < start) [start, end] = [end, start];
         const expenses = costs.map((c) => ({ what: c.what.trim() || "Other", amount: round2(c.amount) })).filter((c) => c.amount > 0);
         const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), expenses, notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
         if (ev.example) data.example = true;
-        if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved"); }
+        if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete($("#e-del"), "Delete", async () => {
-        if (await api.deleteEvent(ev.id)) { closeSheet(); toast("Event deleted. Its sales stay in your history."); }
+        if (await api.deleteEvent(ev.id)) { closeSheet(); toast("Event deleted. Its sales stay in your history.", "ok"); }
       });
     }, { big: true });
   }
@@ -2102,13 +2118,13 @@ import {
         const goSquare = thenSquare; thenSquare = false;
         const rows = box.querySelectorAll(".line"), which = (i) => (lines.length > 1 ? ` for plushie ${i + 1}` : "");
         for (const [i, ln] of lines.entries()) {
-          if (!ln.productId) { rows[i].querySelector(".l-product").focus(); toast(`Choose a plushie${which(i)}.`); return; }
-          if (ln.productId === "__new" && !ln.newName.trim()) { rows[i].querySelector(".l-newtitle").focus(); toast(`Type the new plushie's name${which(i)}.`); return; }
-          if (String(ln.price).trim() === "" || !(Number(ln.price) >= 0)) { rows[i].querySelector(".l-pricein").focus(); toast(`Enter the price${which(i)}.`); return; }
+          if (!ln.productId) { rows[i].querySelector(".l-product").focus(); toast(`Choose a plushie${which(i)}.`, "warn"); return; }
+          if (ln.productId === "__new" && !ln.newName.trim()) { rows[i].querySelector(".l-newtitle").focus(); toast(`Type the new plushie's name${which(i)}.`, "warn"); return; }
+          if (String(ln.price).trim() === "" || !(Number(ln.price) >= 0)) { rows[i].querySelector(".l-pricein").focus(); toast(`Enter the price${which(i)}.`, "warn"); return; }
         }
         const date = $("#s-date").value || todayStr(), channel = $("#s-channel").value, note = $("#s-note").value.trim();
         let eventId = $("#s-event").value, eventName = "";
-        if (eventId === "__new" && !$("#s-newev").value.trim()) { $("#s-newev").focus(); toast("Give the new event a name."); return; }
+        if (eventId === "__new" && !$("#s-newev").value.trim()) { $("#s-newev").focus(); toast("Give the new event a name.", "warn"); return; }
         $("#s-save").disabled = true;
         const fail = () => { $("#s-save").disabled = false; };
         if (eventId === "__new") {
@@ -2159,8 +2175,8 @@ import {
         }
         closeSheet();
         const units = lines.reduce((n, ln) => n + ln.qty, 0), total = lines.reduce((n, ln) => n + lineTotal(ln), 0);
-        if (goSquare) { toast("Sale saved. Opening Square…"); openSquare(orderId, round2(total), saleNote()); return; }
-        toast(isNew ? `Sale saved · ${units > 1 ? `${units} plushies · ` : ""}${fmt(total)}` : "Sale updated");
+        if (goSquare) { toast("Sale saved. Opening Square…", "ok"); openSquare(orderId, round2(total), saleNote()); return; }
+        toast(isNew ? `Sale saved · ${units > 1 ? `${units} plushies · ` : ""}${fmt(total)}` : "Sale updated", "ok");
       });
 
       if (!isNew) armDelete($("#s-del"), "Delete sale", async () => {
@@ -2171,7 +2187,7 @@ import {
           for (const x of orig) qty.set(x.productId, (qty.get(x.productId) || 0) + (x.qty || 0));
           for (const [pid, q] of qty) { const p = productById(pid); if (p) { await api.patchProduct(pid, { stock: (p.stock || 0) + q }); back = true; } }
         }
-        closeSheet(); toast(back ? "Sale deleted and stock put back" : "Sale deleted");
+        closeSheet(); toast(back ? "Sale deleted and stock put back" : "Sale deleted", "ok");
       });
     }, { big: true });
   }
@@ -2181,7 +2197,7 @@ import {
     for (const s of state.sales.filter((x) => x.example)) await api.deleteSale(s.id);
     for (const p of state.products.filter((x) => x.example)) await api.deleteProduct(p.id);
     for (const ev of state.events.filter((x) => x.example)) await api.deleteEvent(ev.id);
-    toast("Examples removed");
+    toast("Examples removed", "ok");
   }
 
   const CSV_HEAD = ["Date", "Plushie", "Quantity", "Price each", "Total", "Paid with", "Materials each", "Sold through", "Event", "Note"];
@@ -2388,7 +2404,7 @@ import {
         const row = el.querySelector(`[data-pid="${CSS.escape(pid)}"]`);
         if (row) row.querySelector(".n").textContent = qty.get(pid);
       };
-      $("#t-clear").addEventListener("click", () => { for (const pid of qty.keys()) setQty(pid, 0); refresh(); toast("Print list cleared"); });
+      $("#t-clear").addEventListener("click", () => { for (const pid of qty.keys()) setQty(pid, 0); refresh(); toast("Print list cleared", "ok"); });
       $("#t-list").addEventListener("click", (e) => {
         const b = e.target.closest("[data-d]"); if (!b) return;
         const pid = b.closest("[data-pid]").dataset.pid;
@@ -2405,16 +2421,16 @@ import {
       $("#t-cancel").addEventListener("click", closeSheet);
       const remember = () => { readOpts(); api.saveSettings({ tagPrint: { dx: opts.dx, dy: opts.dy, flip: opts.flip } }); };
       $("#t-front").addEventListener("click", async () => {
-        if (!total()) { toast("Pick how many tags to print first."); return; }
+        if (!total()) { toast("Pick how many tags to print first.", "warn"); return; }
         remember(); await ensureCodes();
         try { const { pages } = await buildTagPages("front", frontList()); await printPages(pages); }
-        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection."); }
+        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection.", "warn"); }
       });
       $("#t-back").addEventListener("click", async () => {
         remember();
         // The back is the same on every tag, so print whole sheets to match the fronts
         try { const { pages } = await buildTagPages("back", sheets() * per, opts); await printPages(pages); }
-        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection."); }
+        catch (e) { console.error(e); toast("Couldn't prepare the tags. Check the internet connection.", "warn"); }
       });
       refresh();
     });
@@ -2575,12 +2591,12 @@ import {
       el.querySelector("#i-file").addEventListener("change", async (e) => {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
-        if (/\.xlsx?$/i.test(f.name)) { toast("That's an Excel workbook. In Excel, use File → Save As → CSV, then import that file."); return; }
+        if (/\.xlsx?$/i.test(f.name)) { toast("That's an Excel workbook. In Excel, use File → Save As → CSV, then import that file.", "warn"); return; }
         try {
           const plan = buildImport(decodeText(await f.arrayBuffer()));
-          if (plan.error) { toast(plan.error); return; }
+          if (plan.error) { toast(plan.error, "warn"); return; }
           importPreview(plan, f.name);
-        } catch (ex) { console.error(ex); toast("Couldn't read that file."); }
+        } catch (ex) { console.error(ex); toast("Couldn't read that file.", "warn"); }
       });
     });
   }
@@ -2644,7 +2660,7 @@ import {
         });
         if (await api.importAll(products, sales, events)) {
           closeSheet(); state.tab = "sales"; state.filterProduct = ""; state.filterEvent = ""; render();
-          toast(`Imported ${sales.length} sale${sales.length === 1 ? "" : "s"}`);
+          toast(`Imported ${sales.length} sale${sales.length === 1 ? "" : "s"}`, "ok");
         } else go.disabled = false;
       });
     });
@@ -2679,16 +2695,16 @@ import {
     const ta = t.closest("[data-tag-add]");
     if (ta) {
       const p = productById(ta.dataset.tagAdd); if (!p) return;
-      if (!p.price) { toast("Set a default price first; it prints on the tag."); return productSheet(p); }
+      if (!p.price) { toast("Set a default price first; it prints on the tag.", "warn"); return productSheet(p); }
       const n = queued(p.id) + 1; saveQueue({ [p.id]: n });
-      return toast(`${p.name}: ${n} tag${n === 1 ? "" : "s"} in the print list`);
+      return toast(`${p.name}: ${n} tag${n === 1 ? "" : "s"} in the print list`, "ok");
     }
     const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
     const ac = t.closest("[data-add-cost]"); if (ac) return eventSheet(eventById(ac.dataset.addCost), { addCost: true });
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
     const pok = t.closest("[data-price-ok]");
-    if (pok) { const p = productById(pok.dataset.priceOk); if (p) { api.patchProduct(p.id, { priceOk: +p.price || 0 }); toast(`OK, ${p.name} stays at ${fmt(p.price)}`); } return; }
+    if (pok) { const p = productById(pok.dataset.priceOk); if (p) { api.patchProduct(p.id, { priceOk: +p.price || 0 }); toast(`OK, ${p.name} stays at ${fmt(p.price)}`, "ok"); } return; }
     const zm = t.closest("[data-zoom]"); if (zm) { const p = productById(zm.dataset.zoom); if (p && p.photo) showPhoto(p); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
     const iv = t.closest("[data-inv-view]"); if (iv) { inv.view = iv.dataset.invView; saveInv(); render(); return; }
@@ -2710,11 +2726,11 @@ import {
     if (e.target.id !== "venmo-form") return;
     e.preventDefault();
     const user = document.getElementById("venmo-user").value.trim().replace(/^@/, "");
-    if (user && !/^[A-Za-z0-9_-]{2,30}$/.test(user)) { toast("A Venmo username is letters, numbers, - and _ (no spaces)."); return; }
+    if (user && !/^[A-Za-z0-9_-]{2,30}$/.test(user)) { toast("A Venmo username is letters, numbers, - and _ (no spaces).", "warn"); return; }
     const changes = { venmoUser: user };
     if (user && !payMethods().some(isVenmo)) changes.paymentMethods = [...payMethods(), "Venmo"];
     api.saveSettings(changes);
-    toast(user ? `Saved @${user}${changes.paymentMethods ? " and added Venmo to payment methods" : ""}` : "Venmo username removed");
+    toast(user ? `Saved @${user}${changes.paymentMethods ? " and added Venmo to payment methods" : ""}` : "Venmo username removed", "ok");
   });
   view.addEventListener("submit", (e) => {
     if (e.target.id !== "pay-add") return;
@@ -2722,7 +2738,7 @@ import {
     const name = document.getElementById("pay-new").value.trim();
     if (!name) return;
     const list = payMethods();
-    if (list.some((m) => m.toLowerCase() === name.toLowerCase())) { toast(`${name} is already in the list.`); return; }
+    if (list.some((m) => m.toLowerCase() === name.toLowerCase())) { toast(`${name} is already in the list.`, "warn"); return; }
     api.saveSettings({ paymentMethods: [...list, name] });
   });
   view.addEventListener("click", (e) => {
@@ -2730,8 +2746,8 @@ import {
     if (first) { const m = first.dataset.payFirst; api.saveSettings({ paymentMethods: [m, ...payMethods().filter((x) => x !== m)] }); }
     if (rm) {
       const rest = payMethods().filter((x) => x !== rm.dataset.payRemove);
-      if (!rest.length) { toast("Keep at least one payment method."); return; }
-      api.saveSettings({ paymentMethods: rest }); toast(`${rm.dataset.payRemove} removed. Past sales keep it.`);
+      if (!rest.length) { toast("Keep at least one payment method.", "warn"); return; }
+      api.saveSettings({ paymentMethods: rest }); toast(`${rm.dataset.payRemove} removed. Past sales keep it.`, "ok");
     }
   });
   view.addEventListener("change", (e) => {
