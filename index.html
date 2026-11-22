@@ -143,6 +143,12 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 
 .chip { display: inline-block; font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .chip.low { background: var(--warn-soft); color: var(--warn); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.price-check { border: 2px solid var(--warn-soft); }
+.price-check h2 { color: var(--warn); }
+.pc-acts { display: flex; gap: 10px; align-items: center; flex: none; }
+.inv-filters button.warn { color: var(--warn); }
+.inv-filters button.warn[aria-pressed="true"] { background: var(--warn-soft); border-color: var(--warn); }
 .chip.ex { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
 
 .showbars { display: grid; gap: 4px; }
@@ -1022,6 +1028,33 @@ import {
     return (best && best.channel) || CHANNELS[0];
   }
   const saleEventName = (s) => { const ev = eventById(s.eventId); return ev ? ev.name : s.eventName || ""; };
+  // ---------- Price checks ----------
+  // Flags a plushie with no price, or a price that looks like a slip: below its materials, far from what it
+  // has actually been selling for, or wildly off from her other plushies (a 280 typed for 28).
+  // "It's right" stores priceOk = that price, so the flag stays quiet until the price changes.
+  function priceIssues() {
+    const prices = state.products.map((p) => +p.price || 0).filter((v) => v > 0).sort((a, b) => a - b);
+    const typical = prices.length >= 5 ? prices[Math.floor(prices.length / 2)] : 0;
+    const out = new Map();
+    for (const p of state.products) { const r = priceIssueFor(p, typical); if (r) out.set(p.id, r); }
+    return out;
+  }
+  function priceIssueFor(p, typical) {
+    const price = +p.price || 0;
+    if (!(price > 0)) return { none: true, text: "No price set" };
+    if (+p.priceOk === price) return null;
+    if (p.cost > 0 && price < p.cost) return { text: `Priced below its materials (${fmt(p.cost)})` };
+    const recent = state.sales.filter((s) => s.productId === p.id && +s.unitPrice > 0)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, 5).map((s) => +s.unitPrice).sort((a, b) => a - b);
+    if (recent.length >= 2) {
+      const m = recent[Math.floor(recent.length / 2)];
+      if (Math.abs(price - m) / m > 0.4) return { text: `Priced ${fmt(price)}, but usually sells for ${fmt(m)}` };
+    }
+    if (typical && (price >= typical * 8 || price <= typical / 8)) return { text: `Much ${price > typical ? "higher" : "lower"} than your other plushies (most are about ${fmt(typical)})` };
+    return null;
+  }
+  const priceChip = (iss) => (iss ? `<span class="chip warn">${iss.none ? "No price" : "Check price"}</span> ` : "");
   function soldByProduct() {
     const m = new Map();
     for (const s of state.sales) {
@@ -1167,7 +1200,17 @@ import {
       }
     }
 
-    return nowPanels + nextHTML + stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+    const issues = priceIssues();
+    const priceHTML = issues.size && !state.readOnly ? `
+      <section class="panel price-check">
+        <div class="month-head"><h2>⚠ ${issues.size} price${issues.size === 1 ? "" : "s"} to check</h2></div>
+        <div class="rows">${[...issues.entries()].map(([id, iss]) => { const p = productById(id); return `
+          <div class="row">${avatar(p.photo, p.color)}
+            <div class="main"><div class="title">${esc(p.name)}</div><div class="sub">${esc(iss.text)}</div></div>
+            <div class="pc-acts">${iss.none ? "" : `<button class="linkbtn" data-price-ok="${esc(id)}">It's right</button>`}<button class="btn small" data-edit="${esc(id)}">${iss.none ? "Add price" : "Fix"}</button></div>
+          </div>`; }).join("")}</div>
+      </section>` : "";
+    return priceHTML + nowPanels + nextHTML + stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
   // One row per sale; a sale with several plushies lists them together
@@ -1185,7 +1228,9 @@ import {
   }
 
   // Inventory view choices (cards or a compact list, which stock to show, sort order), remembered on this device
-  const INV_FILTERS = { all: ["All", () => true], in: ["In stock", (n) => n > 0], low: ["Low", (n) => n > 0 && n <= 2], out: ["Sold out", (n) => n <= 0] };
+  const INV_FILTERS = { all: ["All", () => true], in: ["In stock", (p) => (p.stock || 0) > 0], low: ["Low", (p) => (p.stock || 0) > 0 && (p.stock || 0) <= 2], out: ["Sold out", (p) => (p.stock || 0) <= 0],
+    price: ["Check price", (p) => !!priceIssueFor(p, invTypical)] };
+  let invTypical = 0;
   const INV_SORTS = { name: "Name", most: "Most in stock", least: "Fewest in stock" };
   const inv = Object.assign({ view: "cards", filter: "all", sort: "name" }, (() => { try { return JSON.parse(localStorage.getItem("invView") || "{}"); } catch (e) { return {}; } })());
   if (!INV_FILTERS[inv.filter]) inv.filter = "all";
@@ -1198,12 +1243,14 @@ import {
     const found = state.products
       .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q));
     const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
-    const list = found.filter((p) => INV_FILTERS[inv.filter][1](p.stock || 0))
+    const issues = priceIssues();
+    invTypical = (() => { const pr = state.products.map((p) => +p.price || 0).filter((v) => v > 0).sort((a, b) => a - b); return pr.length >= 5 ? pr[Math.floor(pr.length / 2)] : 0; })();
+    const list = found.filter((p) => INV_FILTERS[inv.filter][1](p))
       .sort(inv.sort === "most" ? (a, b) => (b.stock || 0) - (a.stock || 0) || byName(a, b)
         : inv.sort === "least" ? (a, b) => (a.stock || 0) - (b.stock || 0) || byName(a, b) : byName);
     const invBar = `<div class="inv-bar">
           <div class="seg" role="group" aria-label="Show as">${[["cards", "Cards"], ["list", "List"]].map(([k, l]) => `<button type="button" data-inv-view="${k}" aria-pressed="${inv.view === k}">${l}</button>`).join("")}</div>
-          <div class="inv-filters" role="group" aria-label="Which plushies">${Object.entries(INV_FILTERS).map(([k, [l, f]]) => `<button type="button" data-inv-filter="${k}" aria-pressed="${inv.filter === k}">${l} <span class="num">${found.filter((p) => f(p.stock || 0)).length}</span></button>`).join("")}</div>
+          <div class="inv-filters" role="group" aria-label="Which plushies">${Object.entries(INV_FILTERS).filter(([k]) => k !== "price" || issues.size || inv.filter === "price").map(([k, [l, f]]) => `<button type="button" data-inv-filter="${k}" aria-pressed="${inv.filter === k}"${k === "price" ? ' class="warn"' : ""}>${l} <span class="num">${found.filter((p) => f(p)).length}</span></button>`).join("")}</div>
           <label class="inv-sort"><span>Sort</span><select id="inv-sort" aria-label="Sort plushies">${Object.entries(INV_SORTS).map(([k, l]) => `<option value="${k}" ${inv.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         </div>`;
     const stepper = (p) => `<div class="stepper" aria-label="Stock for ${esc(p.name)}">
@@ -1212,7 +1259,7 @@ import {
               ${state.readOnly ? "" : `<button data-stock="${esc(p.id)}" data-d="1" aria-label="One more ${esc(p.name)} in stock">+</button>`}
             </div>`;
     const empty = `<section class="panel"><div class="empty">${!state.products.length ? "No plushies yet. Add each design you make with its price and how many you have on hand."
-      : !found.length ? "No plushies match that search." : `No plushies are ${INV_FILTERS[inv.filter][0].toLowerCase()} right now.`}</div></section>`;
+      : !found.length ? "No plushies match that search." : inv.filter === "price" ? "All prices look right." : `No plushies are ${INV_FILTERS[inv.filter][0].toLowerCase()} right now.`}</div></section>`;
     if (inv.view === "list") {
       const shown = list.reduce((n, p) => n + (p.stock || 0), 0);
       return `
@@ -1230,7 +1277,7 @@ import {
           ${zoomAvatar(p)}
           <div class="main">
             ${state.readOnly ? `<div class="title">${esc(p.name)}</div>` : `<button class="title linkish" type="button" data-edit="${esc(p.id)}">${esc(p.name)}</button>`}
-            <div class="sub num">${fmt(p.price)} · ${u} sold${stock <= 0 ? ' · <span class="chip low">Sold out</span>' : stock === 1 ? ' · <span class="chip low">Last one</span>' : ""}</div>
+            <div class="sub num">${priceChip(issues.get(p.id))}${fmt(p.price)} · ${u} sold${stock <= 0 ? ' · <span class="chip low">Sold out</span>' : stock === 1 ? ' · <span class="chip low">Last one</span>' : ""}</div>
           </div>
           ${stepper(p)}
         </div>`;
@@ -1266,7 +1313,7 @@ import {
           </div>
           <div class="bottom">
             <div>
-              ${p.example ? '<span class="chip ex">Example</span> ' : ""}${stock <= 1 ? `<span class="chip low">${stock ? "Last one" : "Sold out"}</span> ` : ""}<span class="label num">${s.units} sold</span>
+              ${p.example ? '<span class="chip ex">Example</span> ' : ""}${priceChip(issues.get(p.id))}${stock <= 1 ? `<span class="chip low">${stock ? "Last one" : "Sold out"}</span> ` : ""}<span class="label num">${s.units} sold</span>
             </div>
             ${stepper(p)}
           </div>
@@ -1578,6 +1625,7 @@ import {
         if (pattern) data.pattern = pattern;
         if (barcode) data.barcode = barcode;
         if (p.example) data.example = true;
+        if (p.priceOk !== undefined && +p.priceOk === data.price) data.priceOk = p.priceOk;
         const ok = await api.saveProduct(p.id || uid(), data);
         if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
       });
@@ -2425,6 +2473,8 @@ import {
     const ac = t.closest("[data-add-cost]"); if (ac) return eventSheet(eventById(ac.dataset.addCost), { addCost: true });
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
+    const pok = t.closest("[data-price-ok]");
+    if (pok) { const p = productById(pok.dataset.priceOk); if (p) { api.patchProduct(p.id, { priceOk: +p.price || 0 }); toast(`OK, ${p.name} stays at ${fmt(p.price)}`); } return; }
     const zm = t.closest("[data-zoom]"); if (zm) { const p = productById(zm.dataset.zoom); if (p && p.photo) showPhoto(p); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
     const iv = t.closest("[data-inv-view]"); if (iv) { inv.view = iv.dataset.invView; saveInv(); render(); return; }
