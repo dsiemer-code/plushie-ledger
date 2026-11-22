@@ -540,6 +540,17 @@ import {
     ov.querySelector(".lb-close").focus();
   }
   // Photos are shrunk and stored with the product in Firestore (no paid Storage plan needed)
+  // Turn a stored photo a quarter turn clockwise (same size and quality limits as shrinkPhoto)
+  async function rotatePhoto(dataUrl) {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const c = document.createElement("canvas"); c.width = h; c.height = w;
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, h, w);
+    ctx.translate(h, 0); ctx.rotate(Math.PI / 2); ctx.drawImage(img, 0, 0);
+    let q = 0.85, out = c.toDataURL("image/jpeg", q);
+    while (out.length > 200000 && q > 0.45) { q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+    return out;
+  }
   async function shrinkPhoto(file) {
     const url = URL.createObjectURL(file);
     try {
@@ -1470,6 +1481,7 @@ import {
           <div id="y-photo-box"></div>
           <div class="opts">
             <button class="btn ghost small" type="button" id="y-photo-btn"></button>
+            <button class="btn ghost small" type="button" id="y-photo-rot" aria-label="Rotate photo a quarter turn">↻ Rotate</button>
             <button class="linkbtn" type="button" id="y-photo-rm">Remove photo</button>
             <input class="vh" type="file" id="y-file" accept="image/*" tabindex="-1" aria-hidden="true">
           </div>
@@ -1494,12 +1506,18 @@ import {
         $("#y-photo-box").innerHTML = photo ? `<img src="${esc(photo)}" alt="Photo of this yarn">` : `<div class="photo-empty">No photo yet</div>`;
         $("#y-photo-btn").textContent = photo ? "Change photo" : "Add photo";
         $("#y-photo-rm").hidden = !photo;
+        $("#y-photo-rot").hidden = !photo;
       };
       const total = () => { const c = +$("#y-cost").value || 0, n = +$("#y-qty").value || 0; $("#y-total").textContent = c && n ? `${n} × ${fmt(c)} = ${fmt(round2(c * n))}` : ""; };
       drawPhoto(); total();
       $("#y-cost").addEventListener("input", total); $("#y-qty").addEventListener("input", total);
       $("#y-photo-btn").addEventListener("click", () => $("#y-file").click());
       $("#y-photo-rm").addEventListener("click", () => { photo = ""; drawPhoto(); });
+      $("#y-photo-rot").addEventListener("click", async (e) => {
+        const b = e.currentTarget; if (!photo || b.disabled) return; b.disabled = true;
+        try { photo = await rotatePhoto(photo); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+        b.disabled = false; drawPhoto();
+      });
       $("#y-file").addEventListener("change", async (e) => {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
@@ -1741,6 +1759,7 @@ import {
           <div id="p-photo-box"></div>
           <div class="opts">
             <button class="btn ghost small" type="button" id="p-photo-btn"></button>
+            <button class="btn ghost small" type="button" id="p-photo-rot" aria-label="Rotate photo a quarter turn">↻ Rotate</button>
             <button class="linkbtn" type="button" id="p-photo-rm">Remove photo</button>
             <input class="vh" type="file" id="p-file" accept="image/*" tabindex="-1" aria-hidden="true">
           </div>
@@ -1777,6 +1796,7 @@ import {
         el.querySelector("#p-photo-box").innerHTML = photo ? `<img src="${esc(photo)}" alt="Photo of this plushie">` : `<div class="photo-empty">No photo yet</div>`;
         el.querySelector("#p-photo-btn").textContent = photo ? "Change photo" : "Add photo";
         el.querySelector("#p-photo-rm").hidden = !photo;
+        el.querySelector("#p-photo-rot").hidden = !photo;
       };
       showPhoto();
       // Yarn used: chosen from her Yarn tab, each with optional skeins per plushie
@@ -1811,6 +1831,11 @@ import {
       }, { once: true }));
       el.querySelector("#p-photo-btn").addEventListener("click", () => el.querySelector("#p-file").click());
       el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; showPhoto(); });
+      el.querySelector("#p-photo-rot").addEventListener("click", async (e) => {
+        const b = e.currentTarget; if (!photo || b.disabled) return; b.disabled = true;
+        try { photo = await rotatePhoto(photo); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+        b.disabled = false; showPhoto();
+      });
       el.querySelector("#p-file").addEventListener("change", async (e) => {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
