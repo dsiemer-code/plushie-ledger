@@ -80,6 +80,9 @@ nav.tabs button {
   font-weight: 600; color: var(--muted);
 }
 nav.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 480px) { nav.tabs { gap: 2px; } nav.tabs button { padding: 8px 2px; font-size: .9rem; } }
+.yarn-ball { flex: none; width: 64px; height: 64px; border-radius: 12px; background: var(--accent-soft);
+  background-image: repeating-linear-gradient(35deg, transparent 0 7px, rgba(122,79,160,.25) 7px 9px), repeating-linear-gradient(-35deg, transparent 0 7px, rgba(122,79,160,.18) 7px 9px); }
 
 main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
@@ -429,6 +432,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
       <button role="tab" id="tab-products" aria-selected="false" data-tab="products">Products</button>
       <button role="tab" id="tab-sales" aria-selected="false" data-tab="sales">Sales</button>
       <button role="tab" id="tab-events" aria-selected="false" data-tab="events">Events</button>
+      <button role="tab" id="tab-yarn" aria-selected="false" data-tab="yarn">Yarn</button>
     </nav>
   </div>
 </header>
@@ -471,10 +475,10 @@ import {
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
   const DEFAULT_PAY = ["Cash", "Card"];
-  const state = { tab: "overview", products: [], sales: [], events: [], settings: {}, loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
+  const state = { tab: "overview", products: [], sales: [], events: [], yarn: [], yarnSearch: "", settings: {}, loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
 
   // Local-only fallback when saving isn't available in this view
-  const local = { products: [], sales: [], events: [], settings: {} };
+  const local = { products: [], sales: [], events: [], yarn: [], settings: {} };
 
   function todayStr() {
     const d = new Date();
@@ -877,6 +881,19 @@ import {
       if (!fs) { local.events = local.events.filter((x) => x.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("events", id)));
     },
+    // Yarn stash, one document per yarn in users/{uid}/yarn
+    async saveYarn(id, data) {
+      if (!fs) { const i = local.yarn.findIndex((x) => x.id === id); const rec = { id, ...data }; if (i >= 0) local.yarn[i] = rec; else local.yarn.push(rec); syncLocal(); return true; }
+      return write(() => setDoc(ref("yarn", id), data));
+    },
+    async patchYarn(id, data) {
+      if (!fs) { const y = local.yarn.find((x) => x.id === id); if (y) Object.assign(y, data); syncLocal(); return true; }
+      return write(() => updateDoc(ref("yarn", id), data));
+    },
+    async deleteYarn(id) {
+      if (!fs) { local.yarn = local.yarn.filter((x) => x.id !== id); syncLocal(); return true; }
+      return write(() => deleteDoc(ref("yarn", id)));
+    },
     // Many records at once, in batches (Firestore allows 500 writes per batch)
     async importAll(products, sales, events = []) {
       if (!fs) { local.products.push(...products); local.sales.push(...sales); local.events.push(...events); syncLocal(); return true; }
@@ -894,6 +911,7 @@ import {
     state.products = local.products.slice();
     state.sales = local.sales.slice().sort(saleSort);
     state.events = local.events.slice();
+    state.yarn = local.yarn.slice();
     state.settings = { ...local.settings };
     render();
   }
@@ -916,7 +934,7 @@ import {
   function connect() {
     if (!configured) {
       // Demo mode: nothing is saved until firebase-config.js is filled in.
-      state.offline = true; state.loaded = { p: true, s: true, e: true };
+      state.offline = true; state.loaded = { p: true, s: true, e: true, y: true };
       const m = (d) => { const x = new Date(); x.setDate(x.getDate() - d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
       local.products = [
         { id: "ex1", name: "Sleepy Axolotl", price: 28, cost: 6.5, stock: 4, hours: 3, color: YARN[0], notes: "Example entry", example: true },
@@ -945,7 +963,7 @@ import {
 
     onAuthStateChanged(auth, (user) => {
       unsubs.forEach((u) => u()); unsubs = [];
-      state.products = []; state.sales = []; state.events = []; state.settings = {}; state.loaded = { p: false, s: false, e: false };
+      state.products = []; state.sales = []; state.events = []; state.yarn = []; state.settings = {}; state.loaded = { p: false, s: false, e: false, y: false };
       if (!user) { uidPath = null; setSync(""); showApp(false); if (squareLandingResult) squareLanding("signin"); return; }
       uidPath = user.uid;
       showApp(true); render();
@@ -961,6 +979,10 @@ import {
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "events"), { includeMetadataChanges: true }, (snap) => {
         state.events = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         state.loaded.e = true; setSync(syncLabel(snap)); render();
+      }, onErr));
+      unsubs.push(onSnapshot(collection(fs, "users", uidPath, "yarn"), (snap) => {
+        state.yarn = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.loaded.y = true; render();
       }, onErr));
       unsubs.push(onSnapshot(doc(fs, "users", uidPath, "settings", "shop"), (snap) => {
         state.settings = snap.exists() ? snap.data() : {}; render();
@@ -1073,17 +1095,18 @@ import {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
     const v = document.getElementById("view");
     const active = document.activeElement && document.activeElement.id;
-    const caret = active === "q" ? document.activeElement.selectionStart : null;
+    const caret = active === "q" || active === "yq" ? document.activeElement.selectionStart : null;
     let html = banners();
     if (!(state.loaded.p && state.loaded.s && state.loaded.e)) html += `<div class="panel"><div class="empty">Loading your shop…</div></div>`;
     else if (state.tab === "overview") html += overviewHTML();
     else if (state.tab === "products") html += productsHTML();
     else if (state.tab === "events") html += eventsHTML();
+    else if (state.tab === "yarn") html += yarnHTML();
     else html += salesHTML();
     v.innerHTML = html;
     if (squareResult) setTimeout(handleSquareResult, 0);
     else setTimeout(checkSquarePending, 0);
-    if (active === "q") { const q = document.getElementById("q"); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
+    if (active === "q" || active === "yq") { const q = document.getElementById(active); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
   }
 
   function banners() {
@@ -1320,6 +1343,121 @@ import {
         </article>`;
       }).join("")}</div>` : empty}
     `;
+  }
+
+  // ---------- Yarn ----------
+  const YARN_WEIGHTS = ["Lace", "Fingering", "Sport", "DK", "Worsted", "Chunky", "Bulky", "Super bulky", "Jumbo"];
+  const yarnById = (id) => state.yarn.find((y) => y.id === id);
+  const yarnTitle = (y) => y.name || [y.brand, y.color].filter(Boolean).join(" ") || "Yarn";
+  function yarnHTML() {
+    if (!state.loaded.y) return `<section class="panel"><div class="empty">Loading your yarn…</div></section>`;
+    const q = state.yarnSearch.trim().toLowerCase();
+    const all = state.yarn.slice().sort((a, b) => (b.bought || "").localeCompare(a.bought || "") || (b.createdAt || 0) - (a.createdAt || 0));
+    const list = all.filter((y) => !q || [y.name, y.brand, y.color, y.store, y.weight, y.notes].some((v) => (v || "").toLowerCase().includes(q)));
+    const skeins = all.reduce((n, y) => n + (+y.qty || 0), 0), worth = all.reduce((n, y) => n + (+y.qty || 0) * (+y.cost || 0), 0);
+    const card = (y) => {
+      const qty = +y.qty || 0;
+      return `<article class="pcard yarn-card">
+        <div class="top">
+          ${y.photo ? `<button type="button" class="zoom-photo" data-zoom-yarn="${esc(y.id)}" aria-label="See ${esc(yarnTitle(y))} bigger"><img class="thumb lg" src="${esc(y.photo)}" alt=""></button>`
+            : `<span class="yarn-ball" aria-hidden="true"></span>`}
+          <div class="main">
+            <div class="name">${esc(yarnTitle(y))}</div>
+            ${y.brand && y.name ? `<div class="meta">${esc(y.brand)}${y.color ? ` · ${esc(y.color)}` : ""}</div>` : ""}
+            ${y.weight ? `<div class="meta">${esc(y.weight)} weight</div>` : ""}
+            ${y.store || y.bought ? `<div class="meta">${y.store ? `From ${esc(y.store)}` : "Bought"}${y.bought ? ` · ${esc(dayLabel(y.bought))}` : ""}</div>` : ""}
+            ${y.notes ? `<div class="meta">${esc(y.notes)}</div>` : ""}
+          </div>
+          ${state.readOnly ? "" : `<button class="linkbtn" data-edit-yarn="${esc(y.id)}" aria-label="Edit ${esc(yarnTitle(y))}">Edit</button>`}
+        </div>
+        <div class="bottom">
+          <div class="num">${+y.cost ? `<b>${fmt(+y.cost)}</b> <span class="label">each</span>` : `<span class="label">No price</span>`}${qty <= 0 ? ' <span class="chip low">Used up</span>' : ""}</div>
+          <div class="stepper" aria-label="Skeins of ${esc(yarnTitle(y))}">
+            ${state.readOnly ? "" : `<button data-yarn-qty="${esc(y.id)}" data-d="-1" aria-label="One fewer skein">−</button>`}
+            <span class="n num">${qty}</span>
+            ${state.readOnly ? "" : `<button data-yarn-qty="${esc(y.id)}" data-d="1" aria-label="One more skein">+</button>`}
+          </div>
+        </div>
+      </article>`;
+    };
+    return `
+      <section class="panel">
+        <div class="toolbar">
+          <input class="search" id="yq" type="search" placeholder="Search yarn, brand, store" value="${esc(state.yarnSearch)}" aria-label="Search yarn" autocomplete="off">
+          ${state.readOnly ? "" : `<button class="btn" data-act="new-yarn" type="button">Add yarn</button>`}
+        </div>
+        <div class="sub num" style="margin-top:10px;color:var(--muted);font-size:.85rem">${all.length} yarn${all.length === 1 ? "" : "s"} · ${skeins} skein${skeins === 1 ? "" : "s"} on hand · ${fmt(round2(worth))} worth</div>
+      </section>
+      ${list.length ? `<div class="cards">${list.map(card).join("")}</div>`
+        : `<section class="panel"><div class="empty">${all.length ? "No yarn matches that search." : "Keep track of your yarn here: snap a photo of the label, and note the brand, where you bought it and what it cost."}</div></section>`}`;
+  }
+
+  function yarnSheet(y) {
+    const isNew = !y;
+    y = y || { name: "", brand: "", color: "", weight: "", store: "", bought: todayStr(), cost: "", qty: 1, notes: "" };
+    let photo = y.photo || "";
+    const T = 'autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"';
+    openSheet(`
+      <h3>${isNew ? "Add yarn" : "Edit yarn"}</h3>
+      <form id="yform" class="fgrid" novalidate>
+        <div class="full photo-edit">
+          <div id="y-photo-box"></div>
+          <div class="opts">
+            <button class="btn ghost small" type="button" id="y-photo-btn"></button>
+            <button class="linkbtn" type="button" id="y-photo-rm">Remove photo</button>
+            <input class="vh" type="file" id="y-file" accept="image/*" tabindex="-1" aria-hidden="true">
+          </div>
+        </div>
+        <label class="f full">Yarn<input id="y-title" value="${esc(y.name)}" placeholder="e.g. Blanket in Vintage White" ${T}></label>
+        <label class="f">Brand<input id="y-brand" value="${esc(y.brand)}" placeholder="e.g. Bernat" ${T}></label>
+        <label class="f">Color<input id="y-color" value="${esc(y.color)}" placeholder="e.g. Vintage White" ${T}></label>
+        <label class="f">Weight<select id="y-weight"><option value="">Not sure</option>${YARN_WEIGHTS.map((w) => `<option ${w === y.weight ? "selected" : ""}>${w}</option>`).join("")}${y.weight && !YARN_WEIGHTS.includes(y.weight) ? `<option selected>${esc(y.weight)}</option>` : ""}</select></label>
+        <label class="f">Where bought<input id="y-store" value="${esc(y.store)}" placeholder="e.g. Michaels" ${T}></label>
+        <label class="f">Date bought<input id="y-bought" type="date" value="${esc(y.bought || "")}"></label>
+        <label class="f">Price each<input id="y-cost" type="number" inputmode="decimal" min="0" step="0.01" value="${esc(y.cost)}" placeholder="0.00"></label>
+        <label class="f">Skeins<input id="y-qty" type="number" inputmode="numeric" min="0" step="1" value="${esc(y.qty)}"></label>
+        <div class="f full sub" id="y-total" style="color:var(--muted);font-size:.85rem"></div>
+        <label class="f full">Notes<textarea id="y-notes" placeholder="Dye lot, yardage, hook size, what it's for">${esc(y.notes)}</textarea></label>
+      </form>
+      <div class="actions">
+        ${isNew ? "" : `<button class="btn danger" id="y-del" type="button">Delete</button>`}
+        <div class="right"><button class="btn ghost" type="button" id="y-cancel">Cancel</button><button class="btn" type="submit" form="yform" id="y-save">${isNew ? "Add yarn" : "Save"}</button></div>
+      </div>`, (el) => {
+      const $ = (sel) => el.querySelector(sel);
+      const drawPhoto = () => {
+        $("#y-photo-box").innerHTML = photo ? `<img src="${esc(photo)}" alt="Photo of this yarn">` : `<div class="photo-empty">No photo yet</div>`;
+        $("#y-photo-btn").textContent = photo ? "Change photo" : "Add photo";
+        $("#y-photo-rm").hidden = !photo;
+      };
+      const total = () => { const c = +$("#y-cost").value || 0, n = +$("#y-qty").value || 0; $("#y-total").textContent = c && n ? `${n} × ${fmt(c)} = ${fmt(round2(c * n))}` : ""; };
+      drawPhoto(); total();
+      $("#y-cost").addEventListener("input", total); $("#y-qty").addEventListener("input", total);
+      $("#y-photo-btn").addEventListener("click", () => $("#y-file").click());
+      $("#y-photo-rm").addEventListener("click", () => { photo = ""; drawPhoto(); });
+      $("#y-file").addEventListener("change", async (e) => {
+        const f = e.target.files && e.target.files[0]; e.target.value = "";
+        if (!f) return;
+        const btn = $("#y-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
+        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG."); }
+        btn.disabled = false; drawPhoto();
+      });
+      $("#y-cancel").addEventListener("click", closeSheet);
+      $("#yform").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const data = {
+          name: $("#y-title").value.trim(), brand: $("#y-brand").value.trim(), color: $("#y-color").value.trim(),
+          weight: $("#y-weight").value, store: $("#y-store").value.trim(), bought: $("#y-bought").value || "",
+          cost: round2($("#y-cost").value), qty: Math.max(0, parseInt($("#y-qty").value, 10) || 0),
+          notes: $("#y-notes").value.trim(), createdAt: y.createdAt || Date.now(),
+        };
+        if (!data.name && !data.brand && !data.color) { $("#y-title").focus(); toast("Give the yarn a name, brand or color."); return; }
+        if (photo) data.photo = photo;
+        if (await api.saveYarn(y.id || uid(), data)) { closeSheet(); toast(isNew ? "Yarn added" : "Saved"); }
+      });
+      if (!isNew) armDelete($("#y-del"), "Delete", async () => {
+        if (await api.deleteYarn(y.id)) { closeSheet(); toast("Yarn deleted"); }
+      });
+    }, { big: true });
   }
 
   function eventsHTML() {
@@ -2461,6 +2599,11 @@ import {
       return pickProduct(products, state.filterProduct, (id) => { state.filterProduct = id; render(); window.scrollTo(0, 0); }, { filter: true });
     }
     if (t.closest("[data-act='new-event']")) return eventSheet();
+    if (t.closest("[data-act='new-yarn']")) return yarnSheet();
+    const ey = t.closest("[data-edit-yarn]"); if (ey) return yarnSheet(yarnById(ey.dataset.editYarn));
+    const yq = t.closest("[data-yarn-qty]");
+    if (yq) { const y = yarnById(yq.dataset.yarnQty); if (y) api.patchYarn(y.id, { qty: Math.max(0, (+y.qty || 0) + Number(yq.dataset.d)) }); return; }
+    const zy = t.closest("[data-zoom-yarn]"); if (zy) { const y = yarnById(zy.dataset.zoomYarn); if (y && y.photo) showPhoto({ name: yarnTitle(y), photo: y.photo, price: +y.cost || 0 }); return; }
     if (t.closest("[data-act='print-tags']")) return tagSheet();
     const ta = t.closest("[data-tag-add]");
     if (ta) {
@@ -2487,7 +2630,10 @@ import {
   view.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.target.matches("[data-sale]")) e.target.click();
   });
-  view.addEventListener("input", (e) => { if (e.target.id === "q") { state.search = e.target.value; render(); } });
+  view.addEventListener("input", (e) => {
+    if (e.target.id === "q") { state.search = e.target.value; render(); }
+    if (e.target.id === "yq") { state.yarnSearch = e.target.value; render(); }
+  });
   // Payment methods manager (Sales tab)
   view.addEventListener("submit", (e) => {
     if (e.target.id !== "venmo-form") return;
