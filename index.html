@@ -391,6 +391,16 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .cost-row { display: flex; gap: 8px; align-items: center; }
 .cost-row .c-what { flex: 1.4; min-width: 0; }
 .cost-row .c-amt { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; color: var(--muted); font-weight: 600; }
+.ev-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 4px; }
+.ev-photo { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--bg); cursor: zoom-in; }
+.ev-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ev-photo-acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+.ev-photo-acts button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(255,255,255,.92); color: var(--ink); font-size: 1.05rem; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.ev-add { aspect-ratio: 1; border: 2px dashed var(--line); border-radius: 12px; background: none; color: var(--accent); font-weight: 600; display: grid; place-content: center; gap: 4px; padding: 8px; text-align: center; }
+.ev-add span { font-size: 1.6rem; line-height: 1; }
+.ev-photo-note { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); font-weight: 500; }
+.ev-thumbs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.ev-thumbs img { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; display: block; }
 .cost-picks { display: flex; gap: 6px; flex-wrap: wrap; }
 .cost-total { margin-top: 8px; color: var(--muted); font-size: .85rem; font-weight: 500; }
 .pick-row.pick-new { border-bottom: 1px dashed var(--line); border-radius: 12px 12px 0 0; margin-bottom: 4px; }
@@ -1237,7 +1247,7 @@ import {
           <div class="stat"><div class="label">Plushies sold</div><div class="v">${t.units}</div></div>
           <div class="stat"><div class="label">After costs</div><div class="v">${fmtShort(t.profit)}</div><span class="d">${costWords(ev)}</span></div>
         </div>
-        ${state.readOnly ? "" : `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost small" data-add-cost="${esc(ev.id)}">+ Add a cost</button>${evOther(ev) ? `<span class="label num">Other costs ${fmt(evOther(ev))}</span>` : ""}</div>`}
+        ${state.readOnly ? "" : `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn ghost small" data-add-cost="${esc(ev.id)}">+ Add a cost</button><button class="btn ghost small" data-add-evphoto="${esc(ev.id)}">📷 Add a photo</button>${evOther(ev) ? `<span class="label num">Other costs ${fmt(evOther(ev))}</span>` : ""}</div>`}
         ${t.orders ? `<div class="num" style="margin-top:10px;padding-top:10px;border-top:2px dashed var(--line);font-size:.88rem"><span class="label">By payment</span> ${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>` : ""}
       </section>`;
     }).join("");
@@ -1555,6 +1565,7 @@ import {
             <div class="meta">${esc(evDates(ev))}${ev.location ? ` · ${esc(ev.location)}` : ""}</div>
             ${ev.fee || evOther(ev) ? `<div class="meta num">${[ev.fee ? `Booth fee ${fmt(ev.fee)}` : "", ...evExpenses(ev).map((x) => `${esc(x.what || "Other")} ${fmt(+x.amount)}`)].filter(Boolean).join(" · ")}</div>` : ""}
             ${ev.notes ? `<div class="meta">${esc(ev.notes)}</div>` : ""}
+            ${Array.isArray(ev.photos) && ev.photos.length ? `<div class="ev-thumbs">${ev.photos.map((src, i) => `<button type="button" class="zoom-photo" data-ev-photo="${esc(ev.id)}" data-i="${i}" aria-label="See booth photo ${i + 1} bigger"><img src="${esc(src)}" alt=""></button>`).join("")}</div>` : ""}
           </div>
           <button class="linkbtn" data-edit-event="${esc(ev.id)}" aria-label="Edit ${esc(ev.name)}">Edit</button>
         </div>
@@ -1886,7 +1897,9 @@ import {
   }
 
   const COST_PICKS = ["Food", "Parking", "Gas", "Supplies", "Hotel"];
-  function eventSheet(ev, { addCost = false } = {}) {
+  // Booth photos live on the event document, so keep them few (each is up to ~200KB; a document tops out at 1MB)
+  const EV_PHOTOS_MAX = 4;
+  function eventSheet(ev, { addCost = false, addPhoto = false } = {}) {
     const isNew = !ev;
     ev = ev || { name: "", start: todayStr(), end: "", location: "", fee: "", notes: "" };
     const costs = (Array.isArray(ev.expenses) ? ev.expenses : []).map((x) => ({ what: x.what || "", amount: x.amount ?? "" }));
@@ -1903,6 +1916,10 @@ import {
           <div id="e-costs"></div>
           <div class="cost-picks" id="e-cost-picks">${COST_PICKS.map((c) => `<button type="button" class="btn ghost small" data-cost="${c}">+ ${c}</button>`).join("")}<button type="button" class="btn ghost small" data-cost="">+ Other</button></div>
           <div class="cost-total num" id="e-cost-total"></div>
+        </div>
+        <div class="f full" id="e-photos-wrap"><span>Booth photos</span>
+          <div class="ev-photos" id="e-photos"></div>
+          <input class="vh" type="file" id="e-file" accept="image/*" multiple tabindex="-1" aria-hidden="true">
         </div>
         <label class="f full">Notes<textarea id="e-notes" placeholder="Booth number, setup time, contact">${esc(ev.notes)}</textarea></label>
       </form>
@@ -1937,6 +1954,39 @@ import {
       costBox.addEventListener("click", (e) => { const r = e.target.closest(".cost-row"); if (r && e.target.closest(".l-remove")) { costs.splice(+r.dataset.i, 1); drawCosts(); } });
       $("#e-fee").addEventListener("input", costTotal);
       if (addCost) setTimeout(() => $("#e-costs-wrap").scrollIntoView({ block: "center" }), 50);
+      // Booth photos: add several at once (up to EV_PHOTOS_MAX), turn or remove each
+      let photos = Array.isArray(ev.photos) ? ev.photos.slice(0, EV_PHOTOS_MAX) : [];
+      const pBox = $("#e-photos"), fileIn = $("#e-file");
+      const drawPhotos = () => {
+        pBox.innerHTML = photos.map((src, i) => `<div class="ev-photo" data-i="${i}"><img src="${esc(src)}" alt="Booth photo ${i + 1}">
+            <div class="ev-photo-acts"><button type="button" class="ev-rot" aria-label="Rotate photo ${i + 1}">↻</button><button type="button" class="ev-rm" aria-label="Remove photo ${i + 1}">×</button></div></div>`).join("")
+          + (photos.length < EV_PHOTOS_MAX ? `<button type="button" class="ev-add" id="e-photo-add"><span aria-hidden="true">+</span>${photos.length ? "Add photo" : "Add photos of your setup"}</button>` : "")
+          + `<div class="ev-photo-note">${photos.length}/${EV_PHOTOS_MAX} photos</div>`;
+      };
+      drawPhotos();
+      pBox.addEventListener("click", async (e) => {
+        if (e.target.closest("#e-photo-add")) return fileIn.click();
+        const tile = e.target.closest(".ev-photo"); if (!tile) return;
+        const i = +tile.dataset.i;
+        if (e.target.closest(".ev-rm")) { photos.splice(i, 1); drawPhotos(); return; }
+        if (e.target.closest(".ev-rot")) {
+          const b = e.target.closest(".ev-rot"); if (b.disabled) return; b.disabled = true;
+          try { photos[i] = await rotatePhoto(photos[i]); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+          drawPhotos(); return;
+        }
+        showPhoto({ name: `${$("#e-title").value.trim() || "Event"} · photo ${i + 1}`, photo: photos[i] });
+      });
+      fileIn.addEventListener("change", async (e) => {
+        const files = [...(e.target.files || [])]; e.target.value = "";
+        if (!files.length) return;
+        const room = EV_PHOTOS_MAX - photos.length;
+        if (files.length > room) toast(`Only ${EV_PHOTOS_MAX} photos fit on an event, so ${room ? `the first ${room} were added` : "none were added"}.`, "warn");
+        for (const f of files.slice(0, room)) {
+          try { photos.push(await shrinkPhoto(f)); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+          drawPhotos();
+        }
+      });
+      if (addPhoto) { $("#e-photos-wrap").scrollIntoView({ block: "center" }); if (photos.length < EV_PHOTOS_MAX) fileIn.click(); }
       $("#e-cancel").addEventListener("click", closeSheet);
       $("#eform").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1946,6 +1996,7 @@ import {
         if (end < start) [start, end] = [end, start];
         const expenses = costs.map((c) => ({ what: c.what.trim() || "Other", amount: round2(c.amount) })).filter((c) => c.amount > 0);
         const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), expenses, notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
+        if (photos.length) data.photos = photos;
         if (ev.example) data.example = true;
         if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved", "ok"); }
       });
@@ -2726,6 +2777,9 @@ import {
     }
     const ee = t.closest("[data-edit-event]"); if (ee) return eventSheet(eventById(ee.dataset.editEvent));
     const ac = t.closest("[data-add-cost]"); if (ac) return eventSheet(eventById(ac.dataset.addCost), { addCost: true });
+    const ap = t.closest("[data-add-evphoto]"); if (ap) return eventSheet(eventById(ap.dataset.addEvphoto), { addPhoto: true });
+    const evp = t.closest("[data-ev-photo]");
+    if (evp) { const ev = eventById(evp.dataset.evPhoto), i = +evp.dataset.i; if (ev && ev.photos && ev.photos[i]) showPhoto({ name: `${ev.name} · photo ${i + 1} of ${ev.photos.length}`, photo: ev.photos[i] }); return; }
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
     const pok = t.closest("[data-price-ok]");
