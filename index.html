@@ -81,8 +81,22 @@ nav.tabs button {
 }
 nav.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
 @media (max-width: 480px) { nav.tabs { gap: 2px; } nav.tabs button { padding: 8px 2px; font-size: .9rem; } }
+.ythumb { flex: none; width: 48px; height: 48px; border-radius: 10px; object-fit: cover; }
+.ythumb.sm { width: 22px; height: 22px; border-radius: 6px; }
+.yarn-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.yarn-tag { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px 2px 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: .8rem; color: var(--ink); }
+.yarn-tag small { color: var(--muted); white-space: nowrap; }
+.p-yarns { display: grid; gap: 8px; margin-bottom: 8px; }
+.p-yarn { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.p-yarn .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.p-yarn .nm small { display: block; font-weight: 500; color: var(--muted); font-size: .8rem; }
+.p-yarn-amt { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .8rem; font-weight: 600; }
+.p-yarn-amt input { width: 68px; padding: 8px; }
+.used-in .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; }
 .yarn-ball { flex: none; width: 64px; height: 64px; border-radius: 12px; background: var(--accent-soft);
   background-image: repeating-linear-gradient(35deg, transparent 0 7px, rgba(122,79,160,.25) 7px 9px), repeating-linear-gradient(-35deg, transparent 0 7px, rgba(122,79,160,.18) 7px 9px); }
+.yarn-ball.ythumb { width: 48px; height: 48px; border-radius: 10px; }
+.yarn-ball.ythumb.sm { width: 22px; height: 22px; border-radius: 6px; }
 
 main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
@@ -1264,7 +1278,8 @@ import {
     const sold = soldByProduct();
     const q = state.search.trim().toLowerCase();
     const found = state.products
-      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q));
+      .filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q) || (p.barcode || "").toLowerCase().includes(q)
+        || productYarns(p).some((u) => [u.y.name, u.y.brand, u.y.color].some((v) => (v || "").toLowerCase().includes(q))));
     const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
     const issues = priceIssues();
     invTypical = (() => { const pr = state.products.map((p) => +p.price || 0).filter((v) => v > 0).sort((a, b) => a - b); return pr.length >= 5 ? pr[Math.floor(pr.length / 2)] : 0; })();
@@ -1328,6 +1343,7 @@ import {
               <div class="name">${esc(p.name)}</div>
               <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
               ${p.notes ? `<div class="meta">${esc(p.notes)}</div>` : ""}
+              ${(() => { const ys = productYarns(p); return ys.length ? `<div class="meta yarn-line">${ys.map((u) => `<span class="yarn-tag">${yarnThumb(u.y, "sm")}${esc(yarnTitle(u.y))}${u.amount ? ` <small>× ${esc(amountText(u.amount))}</small>` : ""}</span>`).join("")}</div>` : ""; })()}
               ${p.barcode ? `<div class="meta num">Barcode ${esc(p.barcode)}</div>` : ""}
               ${state.readOnly ? "" : `<div class="tag-row"><button class="linkbtn" type="button" data-tag-add="${esc(p.id)}">+ Add tag</button>${queued(p.id) ? `<span class="chip num">${queued(p.id)} tag${queued(p.id) === 1 ? "" : "s"} to print</span>` : ""}</div>`}
               ${cleanUrl(p.pattern) ? `<a class="pattern" href="${esc(cleanUrl(p.pattern))}" target="_blank" rel="noopener noreferrer" title="${esc(p.pattern)}">Pattern<span aria-hidden="true"> ↗</span><span class="host">${esc(new URL(cleanUrl(p.pattern)).hostname.replace(/^www\./, ""))}</span></a>` : ""}
@@ -1349,6 +1365,39 @@ import {
   const YARN_WEIGHTS = ["Lace", "Fingering", "Sport", "DK", "Worsted", "Chunky", "Bulky", "Super bulky", "Jumbo"];
   const yarnById = (id) => state.yarn.find((y) => y.id === id);
   const yarnTitle = (y) => y.name || [y.brand, y.color].filter(Boolean).join(" ") || "Yarn";
+  // Products list the yarns they're made from: product.yarns = [{ yarnId, amount }] (amount = skeins per plushie, optional)
+  const productYarns = (p) => (Array.isArray(p.yarns) ? p.yarns : []).map((u) => ({ ...u, y: yarnById(u.yarnId) })).filter((u) => u.y);
+  const yarnUsedIn = (yid) => state.products.filter((p) => (Array.isArray(p.yarns) ? p.yarns : []).some((u) => u.yarnId === yid));
+  const yarnThumb = (y, cls = "") => (y.photo ? `<img class="ythumb ${cls}" src="${esc(y.photo)}" alt="">` : `<span class="ythumb yarn-ball ${cls}" aria-hidden="true"></span>`);
+  const amountText = (a) => (+a ? `${+a} skein${+a === 1 ? "" : "s"}` : "");
+  // Searchable list of her yarn to pick from (skipping ones already chosen). onPick(id).
+  function pickYarn(skipIds, onPick) {
+    const ov = document.createElement("div");
+    ov.className = "picker-ov";
+    const pool = state.yarn.filter((y) => !skipIds.includes(y.id)).sort((a, b) => yarnTitle(a).localeCompare(yarnTitle(b)));
+    ov.innerHTML = `<div class="picker" role="dialog" aria-modal="true" aria-label="Choose yarn">
+      <div class="picker-head"><h3>Choose yarn</h3><button type="button" class="btn ghost small" data-close>Close</button></div>
+      <div class="picker-search"><input type="search" placeholder="Search ${pool.length} yarn${pool.length === 1 ? "" : "s"}" aria-label="Search yarn" autocomplete="off"></div>
+      <div class="picker-list"></div>
+    </div>`;
+    document.getElementById("sheet-root").appendChild(ov);
+    const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
+    const row = (y) => `<button type="button" class="pick-row" data-id="${esc(y.id)}">${yarnThumb(y)}
+      <span class="nm">${esc(yarnTitle(y))}<span class="meta">${[y.name ? y.brand : "", y.weight ? `${y.weight} weight` : "", `${+y.qty || 0} skein${+y.qty === 1 ? "" : "s"} on hand`].filter(Boolean).map(esc).join(" · ")}</span></span></button>`;
+    const draw = () => {
+      const t = q.value.trim().toLowerCase();
+      const hits = pool.filter((y) => !t || [y.name, y.brand, y.color, y.store, y.weight].some((v) => (v || "").toLowerCase().includes(t)));
+      list.innerHTML = hits.map(row).join("") || `<p class="pick-none">${state.yarn.length ? (pool.length ? `No yarn matches “${esc(q.value.trim())}”.` : "All your yarn is already on this plushie.") : "No yarn yet. Add yarn on the Yarn tab first."}</p>`;
+    };
+    draw();
+    q.addEventListener("input", draw);
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
+      const b = e.target.closest(".pick-row"); if (!b) return;
+      ov.remove(); onPick(b.dataset.id);
+    });
+    if (matchMedia("(pointer: fine)").matches) q.focus();
+  }
   function yarnHTML() {
     if (!state.loaded.y) return `<section class="panel"><div class="empty">Loading your yarn…</div></section>`;
     const q = state.yarnSearch.trim().toLowerCase();
@@ -1367,6 +1416,7 @@ import {
             ${y.weight ? `<div class="meta">${esc(y.weight)} weight</div>` : ""}
             ${y.store || y.bought ? `<div class="meta">${y.store ? `From ${esc(y.store)}` : "Bought"}${y.bought ? ` · ${esc(dayLabel(y.bought))}` : ""}</div>` : ""}
             ${y.notes ? `<div class="meta">${esc(y.notes)}</div>` : ""}
+            ${(() => { const used = yarnUsedIn(y.id); return used.length ? `<div class="meta used-in">Used in ${used.map((p) => `<button type="button" class="linkish" data-edit="${esc(p.id)}">${esc(p.name)}</button>`).join(", ")}</div>` : ""; })()}
           </div>
           ${state.readOnly ? "" : `<button class="linkbtn" data-edit-yarn="${esc(y.id)}" aria-label="Edit ${esc(yarnTitle(y))}">Edit</button>`}
         </div>
@@ -1696,6 +1746,10 @@ import {
         <div class="full"><div class="label" style="margin-bottom:6px">Yarn color</div><div class="colors" id="p-colors">
           ${YARN.map((c) => `<button type="button" style="--sw:${c}" data-c="${c}" aria-label="Color ${c}" aria-pressed="${c === color}"></button>`).join("")}
         </div></div>
+        <div class="full"><div class="label" style="margin-bottom:6px">Yarn used</div>
+          <div id="p-yarns" class="p-yarns"></div>
+          <button type="button" class="btn ghost small" id="p-yarn-add">+ Add yarn</button>
+        </div>
         <label class="f full">Pattern link<input id="p-pattern" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(p.pattern)}" placeholder="Paste the pattern's web address"></label>
         <label class="f full">Notes<textarea id="p-notes" placeholder="Yarn brand, size, hook">${esc(p.notes)}</textarea></label>
       </form>
@@ -1709,6 +1763,20 @@ import {
         el.querySelector("#p-photo-rm").hidden = !photo;
       };
       showPhoto();
+      // Yarn used: chosen from her Yarn tab, each with optional skeins per plushie
+      let yarns = (Array.isArray(p.yarns) ? p.yarns : []).filter((u) => yarnById(u.yarnId)).map((u) => ({ yarnId: u.yarnId, amount: +u.amount > 0 ? u.amount : "" }));
+      const yBox = el.querySelector("#p-yarns");
+      const drawYarns = () => {
+        yBox.innerHTML = yarns.map((u, i) => { const y = yarnById(u.yarnId); return `<div class="p-yarn" data-i="${i}">${yarnThumb(y)}
+          <div class="nm">${esc(yarnTitle(y))}${y.name && y.brand ? `<small>${esc(y.brand)}</small>` : ""}</div>
+          <label class="p-yarn-amt"><input type="number" inputmode="decimal" min="0" step="0.25" value="${esc(u.amount)}" placeholder="–" aria-label="Skeins of ${esc(yarnTitle(y))} per plushie"><span>skeins each</span></label>
+          <button type="button" class="l-remove" aria-label="Remove ${esc(yarnTitle(y))}">×</button></div>`; }).join("")
+          || `<div class="sub" style="color:var(--muted);font-size:.85rem;margin-bottom:8px">${state.yarn.length ? "No yarn linked yet." : "Add your yarn on the Yarn tab, then link it here."}</div>`;
+      };
+      drawYarns();
+      el.querySelector("#p-yarn-add").addEventListener("click", () => pickYarn(yarns.map((u) => u.yarnId), (id) => { yarns.push({ yarnId: id, amount: "" }); drawYarns(); }));
+      yBox.addEventListener("input", (e) => { const r = e.target.closest(".p-yarn"); if (r) yarns[+r.dataset.i].amount = e.target.value; });
+      yBox.addEventListener("click", (e) => { const r = e.target.closest(".p-yarn"); if (r && e.target.closest(".l-remove")) { yarns.splice(+r.dataset.i, 1); drawYarns(); } });
       const bcIn = el.querySelector("#p-barcode");
       let bcTimer;
       const showBarcode = () => {
@@ -1764,6 +1832,9 @@ import {
         if (barcode) data.barcode = barcode;
         if (p.example) data.example = true;
         if (p.priceOk !== undefined && +p.priceOk === data.price) data.priceOk = p.priceOk;
+        // keep links to yarn that isn't loaded/known here, plus the ones chosen in this popup
+        const keep = (Array.isArray(p.yarns) ? p.yarns : []).filter((u) => !yarnById(u.yarnId));
+        data.yarns = [...yarns.map((u) => ({ yarnId: u.yarnId, amount: +u.amount > 0 ? round2(u.amount) : 0 })), ...keep];
         const ok = await api.saveProduct(p.id || uid(), data);
         if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved"); }
       });
