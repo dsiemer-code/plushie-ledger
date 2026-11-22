@@ -1268,9 +1268,9 @@ import {
     else html += salesHTML();
     v.innerHTML = html;
     if (squareResult) setTimeout(handleSquareResult, 0);
+    else setTimeout(checkSquarePending, 0);
     if (fs && !photosMoved && state.loaded.p && state.loaded.e && state.loaded.y) setTimeout(movePhotos, 1500);
     if (state.loaded.p && state.loaded.y) setTimeout(prefetchPhotos, 800);
-    else setTimeout(checkSquarePending, 0);
     if (active === "q" || active === "yq") { const q = document.getElementById(active); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
   }
 
