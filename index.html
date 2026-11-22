@@ -296,6 +296,15 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 /* With the on-screen keyboard up (mainly iPad), popups fit the space above it; --kb-* are set by script */
 .overlay, .picker-ov, .scanner { top: var(--kb-top, 0px); bottom: auto; height: var(--kb-h, 100%); }
 .kb-open .sheet, .kb-open .picker { padding-bottom: 12px; }
+/* Tap a product photo to see it big */
+.zoom-photo { border: 0; padding: 0; background: none; border-radius: 12px; cursor: zoom-in; flex: none; line-height: 0; }
+.inv-list .zoom-photo { border-radius: 8px; }
+.lightbox { position: fixed; inset: 0; z-index: 45; background: rgba(10,6,14,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  padding: calc(56px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px)); cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: calc(100% - 48px); object-fit: contain; border-radius: 14px; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.lb-cap { color: #fff; font-weight: 600; text-align: center; }
+.lb-close { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 16px; background: rgba(255,255,255,.92); }
+@media (prefers-reduced-motion: no-preference) { .lightbox { animation: lbfade .15s ease-out; } @keyframes lbfade { from { opacity: 0; } } }
 .sq-landing { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 24px; }
 .sq-card { max-width: 420px; text-align: center; display: grid; gap: 12px; justify-items: center; }
 .sq-card h2 { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; }
@@ -480,6 +489,19 @@ import {
   function avatar(photo, color, big) {
     if (photo && /^data:image\//.test(photo)) return `<img class="thumb${big ? " lg" : ""}" src="${esc(photo)}" alt="">`;
     return `<span class="swatch${big ? " lg" : ""}" style="--sw:${esc(color || YARN[6])}"></span>`;
+  }
+  // On the Products tab a photo can be tapped to see it big
+  const zoomAvatar = (p, big) => (p.photo && /^data:image\//.test(p.photo)
+    ? `<button type="button" class="zoom-photo" data-zoom="${esc(p.id)}" aria-label="See ${esc(p.name)} bigger">${avatar(p.photo, p.color, big)}</button>`
+    : avatar(p.photo, p.color, big));
+  function showPhoto(p) {
+    const ov = document.createElement("div");
+    ov.className = "lightbox"; ov.setAttribute("role", "dialog"); ov.setAttribute("aria-modal", "true"); ov.setAttribute("aria-label", p.name || "Photo");
+    ov.innerHTML = `<button type="button" class="btn ghost small lb-close">Close</button>
+      <img src="${esc(p.photo)}" alt="${esc(p.name)}"><div class="lb-cap">${esc(p.name)}${p.price ? ` · ${fmt(p.price)}` : ""}</div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", () => ov.remove()); // tap anywhere to close
+    ov.querySelector(".lb-close").focus();
   }
   // Photos are shrunk and stored with the product in Firestore (no paid Storage plan needed)
   async function shrinkPhoto(file) {
@@ -1205,7 +1227,7 @@ import {
       ${list.length ? `<section class="panel"><div class="rows inv-list">${list.map((p) => {
         const stock = p.stock || 0, u = (sold.get(p.id) || { units: 0 }).units;
         return `<div class="row">
-          ${avatar(p.photo, p.color)}
+          ${zoomAvatar(p)}
           <div class="main">
             ${state.readOnly ? `<div class="title">${esc(p.name)}</div>` : `<button class="title linkish" type="button" data-edit="${esc(p.id)}">${esc(p.name)}</button>`}
             <div class="sub num">${fmt(p.price)} · ${u} sold${stock <= 0 ? ' · <span class="chip low">Sold out</span>' : stock === 1 ? ' · <span class="chip low">Last one</span>' : ""}</div>
@@ -1231,7 +1253,7 @@ import {
         const stock = p.stock || 0;
         return `<article class="pcard">
           <div class="top">
-            ${avatar(p.photo, p.color, true)}
+            ${zoomAvatar(p, true)}
             <div class="main">
               <div class="name">${esc(p.name)}</div>
               <div class="meta num">${fmt(p.price)}${p.cost ? ` · ${fmt(p.cost)} materials` : ""}${p.hours ? ` · ${p.hours} hr to make` : ""}</div>
@@ -1361,6 +1383,7 @@ import {
   function closeSheet() { document.getElementById("sheet-root").innerHTML = ""; }
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const lb = document.querySelector(".lightbox"); if (lb) { lb.remove(); return; }
     const picker = document.querySelector(".picker-ov");
     if (picker) picker.remove(); else closeSheet();
   });
@@ -2402,6 +2425,7 @@ import {
     const ac = t.closest("[data-add-cost]"); if (ac) return eventSheet(eventById(ac.dataset.addCost), { addCost: true });
     const es = t.closest("[data-event-sales]");
     if (es) { state.filterEvent = es.dataset.eventSales; state.filterProduct = ""; state.tab = "sales"; render(); window.scrollTo(0, 0); return; }
+    const zm = t.closest("[data-zoom]"); if (zm) { const p = productById(zm.dataset.zoom); if (p && p.photo) showPhoto(p); return; }
     const ed = t.closest("[data-edit]"); if (ed) return productSheet(productById(ed.dataset.edit));
     const iv = t.closest("[data-inv-view]"); if (iv) { inv.view = iv.dataset.invView; saveInv(); render(); return; }
     const ifl = t.closest("[data-inv-filter]"); if (ifl) { inv.filter = ifl.dataset.invFilter; saveInv(); render(); return; }
