@@ -394,6 +394,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .ev-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 4px; }
 .ev-photo { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--bg); cursor: zoom-in; }
 .ev-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ev-loading { width: 100%; height: 100%; display: grid; place-items: center; color: var(--muted); font-size: .8rem; }
 .ev-photo-acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
 .ev-photo-acts button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(255,255,255,.92); color: var(--ink); font-size: 1.05rem; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
 .ev-add { aspect-ratio: 1; border: 2px dashed var(--line); border-radius: 12px; background: none; color: var(--accent); font-weight: 600; display: grid; place-content: center; gap: 4px; padding: 8px; text-align: center; }
@@ -499,6 +500,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch,
+  getDoc, getDocFromCache, getDocs, where, deleteField,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 {
@@ -514,7 +516,7 @@ import {
   const state = { tab: "overview", products: [], sales: [], events: [], yarn: [], yarnSearch: "", settings: {}, loaded: { p: false, s: false, e: false }, filterProduct: "", filterEvent: "", search: "", readOnly: false, offline: false };
 
   // Local-only fallback when saving isn't available in this view
-  const local = { products: [], sales: [], events: [], yarn: [], settings: {} };
+  const local = { products: [], sales: [], events: [], yarn: [], settings: {}, photos: {} };
 
   function todayStr() {
     const d = new Date();
@@ -689,6 +691,17 @@ import {
     if (r.here) { if (!r.orderId) { r.orderId = pend.orderId; r.cents = pend.cents; } store.del("squarePending"); }
     return r;
   })();
+  const squareMark = (r) => (r.ok ? { squareStatus: "paid", squarePaid: true, ...(r.txn ? { squareTxn: r.txn } : {}) } : { squareStatus: "failed", squareError: r.error || "unknown" });
+  let landingResume = null; // loads the full ledger if she stays on the Square tab
+  async function recordSquareLanding(r) {
+    try {
+      const snap = r.orderId ? await getDocs(query(collection(fs, "users", uidPath, "sales"), where("orderId", "==", r.orderId))) : null;
+      if (!snap || snap.empty) { squareLanding("missing"); return; }
+      const mark = squareMark(r);
+      await Promise.all(snap.docs.map((d) => updateDoc(d.ref, mark)));
+      squareLanding("saved");
+    } catch (e) { console.error(e); squareLanding("failed"); }
+  }
   function handleSquareResult() {
     if (!squareResult || !(state.loaded.p && state.loaded.s && state.loaded.e)) return;
     const r = squareResult; squareResult = null;
@@ -719,7 +732,8 @@ import {
       ov.querySelector("#sq-close").addEventListener("click", (e) => {
         // Not signed in: uncover the sign-in form instead of closing the tab
         if (e.currentTarget.dataset.mode === "signin") { ov.remove(); const em = document.getElementById("si-email"); if (em) em.focus(); return; }
-        window.close(); setTimeout(() => ov.remove(), 300);
+        window.close();
+        setTimeout(() => { ov.remove(); if (landingResume) { const go = landingResume; landingResume = null; go(); } }, 300);
       });
     }
     const msg = {
@@ -958,11 +972,98 @@ import {
       return ok;
     },
   };
+  // ---------- Photos ----------
+  // Photos live in their own documents (users/{uid}/photos/{id} = { data }) so loading the ledger doesn't
+  // download every picture. Plushies and yarn keep a photoId, events keep photoIds. A photo never changes once
+  // written (a new picture gets a new id), so each device downloads it once and then reads it from its cache.
+  const photoCache = new Map(), photoWaits = new Map();
+  let photoRender = 0;
+  function loadPhoto(id) {
+    if (!id) return Promise.resolve("");
+    if (photoCache.has(id)) return Promise.resolve(photoCache.get(id));
+    if (!photoWaits.has(id)) photoWaits.set(id, (async () => {
+      let src = "";
+      if (!fs) src = local.photos[id] || "";
+      else {
+        const r = ref("photos", id);
+        try { const d = await getDocFromCache(r); src = (d.exists() && d.data().data) || ""; } catch (e) { /* not on this device yet */ }
+        if (!src) { try { const d = await getDoc(r); src = (d.exists() && d.data().data) || ""; } catch (e) { console.error(e); } }
+      }
+      if (src) photoCache.set(id, src);
+      photoWaits.delete(id);
+      return src;
+    })());
+    return photoWaits.get(id);
+  }
+  // The photo if it's already here; otherwise start fetching it and redraw when it arrives
+  function photoSrc(id) {
+    if (!id) return "";
+    if (photoCache.has(id)) return photoCache.get(id);
+    loadPhoto(id).then((src) => { if (src && !photoRender) photoRender = requestAnimationFrame(() => { photoRender = 0; render(); }); });
+    return "";
+  }
+  function storePhoto(src) {
+    const id = uid();
+    photoCache.set(id, src);
+    if (!fs) local.photos[id] = src;
+    else write(() => setDoc(ref("photos", id), { data: src, createdAt: Date.now() }));
+    return id;
+  }
+  function dropPhoto(id) {
+    if (!id) return;
+    photoCache.delete(id);
+    if (!fs) delete local.photos[id];
+    else write(() => deleteDoc(ref("photos", id)));
+  }
+  // Give records a .photo (and events .photos) that reads from the photo store, while still showing
+  // photos saved the old way (inside the record) until they're moved
+  const hydrated = new WeakSet();
+  function hydrate(o, many = false) {
+    if (hydrated.has(o)) return o;
+    hydrated.add(o);
+    const inline = typeof o.photo === "string" && o.photo.startsWith("data:") ? o.photo : "";
+    delete o.photo;
+    Object.defineProperty(o, "_inlinePhoto", { value: inline });
+    Object.defineProperty(o, "photo", { configurable: true, get() { return inline || photoSrc(o.photoId); } });
+    if (many) {
+      const inl = Array.isArray(o.photos) ? o.photos.filter((x) => typeof x === "string" && x.startsWith("data:")) : [];
+      delete o.photos;
+      Object.defineProperty(o, "_inlinePhotos", { value: inl });
+      Object.defineProperty(o, "photos", { configurable: true, get() { return Array.isArray(o.photoIds) ? o.photoIds.map(photoSrc).filter(Boolean) : inl; } });
+    }
+    return o;
+  }
+  // One-time move of photos saved inside records into the photo store (runs quietly after loading)
+  let photosMoved = false;
+  function movePhotos() {
+    if (photosMoved || !fs || state.readOnly || !(state.loaded.p && state.loaded.e && state.loaded.y)) return;
+    photosMoved = true;
+    for (const [col, list] of [["products", state.products], ["yarn", state.yarn]]) {
+      for (const o of list) if (o._inlinePhoto && !o.photoId) {
+        const id = storePhoto(o._inlinePhoto);
+        write(() => updateDoc(ref(col, o.id), { photoId: id, photo: deleteField() }));
+      }
+    }
+    for (const ev of state.events) if (ev._inlinePhotos.length && !Array.isArray(ev.photoIds)) {
+      const ids = ev._inlinePhotos.map(storePhoto);
+      write(() => updateDoc(ref("events", ev.id), { photoIds: ids, photos: deleteField() }));
+    }
+  }
+  // Fetch plushie and yarn photos in the background so pickers show them right away (free once cached)
+  let prefetched = "";
+  function prefetchPhotos() {
+    const ids = [...state.products, ...state.yarn].map((o) => o.photoId).filter((id) => id && !photoCache.has(id));
+    const key = ids.join(",");
+    if (!ids.length || key === prefetched) return;
+    prefetched = key;
+    (async () => { for (const id of ids) await loadPhoto(id); render(); })();
+  }
+
   function syncLocal() {
-    state.products = local.products.slice();
+    state.products = local.products.map((o) => hydrate(o));
     state.sales = local.sales.slice().sort(saleSort);
-    state.events = local.events.slice();
-    state.yarn = local.yarn.slice();
+    state.events = local.events.map((o) => hydrate(o, true));
+    state.yarn = local.yarn.map((o) => hydrate(o));
     state.settings = { ...local.settings };
     render();
   }
@@ -1009,7 +1110,7 @@ import {
     }
     const app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    try { fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+    try { fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager(), cacheSizeBytes: 300 * 1024 * 1024 }) }); }
     catch (e) { fs = initializeFirestore(app, {}); }
 
     onAuthStateChanged(auth, (user) => {
@@ -1018,9 +1119,20 @@ import {
       if (!user) { uidPath = null; setSync(""); showApp(false); if (squareLandingResult) squareLanding("signin"); return; }
       uidPath = user.uid;
       showApp(true); render();
+      // Square sent her here (a new Safari tab) just to report a payment: record it on that sale only,
+      // without loading the whole ledger. The rest loads only if she stays on this tab.
+      if (squareResult && !squareResult.here) {
+        const r = squareResult; squareResult = null;
+        recordSquareLanding(r);
+        landingResume = startListeners;
+        return;
+      }
+      startListeners();
+    });
+    function startListeners() {
       const onErr = (e) => { console.error(e); setSync("Can't load"); toast("Couldn't load the ledger. Check the Firestore rules in the setup guide.", "err"); };
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "products"), { includeMetadataChanges: true }, (snap) => {
-        state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.products = snap.docs.map((d) => hydrate({ id: d.id, ...d.data() }));
         state.loaded.p = true; setSync(syncLabel(snap)); render();
       }, onErr));
       unsubs.push(onSnapshot(query(collection(fs, "users", uidPath, "sales"), orderBy("date", "desc"), limit(2000)), { includeMetadataChanges: true }, (snap) => {
@@ -1028,17 +1140,17 @@ import {
         state.loaded.s = true; setSync(syncLabel(snap)); render();
       }, onErr));
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "events"), { includeMetadataChanges: true }, (snap) => {
-        state.events = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.events = snap.docs.map((d) => hydrate({ id: d.id, ...d.data() }, true));
         state.loaded.e = true; setSync(syncLabel(snap)); render();
       }, onErr));
       unsubs.push(onSnapshot(collection(fs, "users", uidPath, "yarn"), (snap) => {
-        state.yarn = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        state.yarn = snap.docs.map((d) => hydrate({ id: d.id, ...d.data() }));
         state.loaded.y = true; render();
       }, onErr));
       unsubs.push(onSnapshot(doc(fs, "users", uidPath, "settings", "shop"), (snap) => {
         state.settings = snap.exists() ? snap.data() : {}; render();
       }, onErr));
-    });
+    }
 
     document.getElementById("signin").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -1157,6 +1269,8 @@ import {
     v.innerHTML = html;
     if (squareResult) setTimeout(handleSquareResult, 0);
     else setTimeout(checkSquarePending, 0);
+    if (fs && !photosMoved && state.loaded.p && state.loaded.e && state.loaded.y) setTimeout(movePhotos, 1500);
+    if (state.loaded.p && state.loaded.y) setTimeout(prefetchPhotos, 800);
     if (active === "q" || active === "yq") { const q = document.getElementById(active); if (q) { q.focus(); try { q.setSelectionRange(caret, caret); } catch (e) {} } }
   }
 
@@ -1427,6 +1541,7 @@ import {
       list.innerHTML = hits.map(row).join("") || `<p class="pick-none">${state.yarn.length ? (pool.length ? `No yarn matches “${esc(q.value.trim())}”.` : "All your yarn is already on this plushie.") : "No yarn yet. Add yarn on the Yarn tab first."}</p>`;
     };
     draw();
+    Promise.all(pool.filter((y) => y.photoId && !photoCache.has(y.photoId)).map((y) => loadPhoto(y.photoId))).then((got) => { if (got.length && ov.isConnected) draw(); });
     q.addEventListener("input", draw);
     ov.addEventListener("click", (e) => {
       if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
@@ -1482,7 +1597,7 @@ import {
   function yarnSheet(y) {
     const isNew = !y;
     y = y || { name: "", brand: "", color: "", weight: "", store: "", bought: todayStr(), cost: "", qty: 1, notes: "" };
-    let photo = y.photo || "";
+    let photo = y.photo || "", photoChanged = false;
     const T = 'autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"';
     openSheet(`
       <h3>${isNew ? "Add yarn" : "Edit yarn"}</h3>
@@ -1522,17 +1637,18 @@ import {
       drawPhoto(); total();
       $("#y-cost").addEventListener("input", total); $("#y-qty").addEventListener("input", total);
       $("#y-photo-btn").addEventListener("click", () => $("#y-file").click());
-      $("#y-photo-rm").addEventListener("click", () => { photo = ""; drawPhoto(); });
+      if (!photo && y.photoId) loadPhoto(y.photoId).then((src) => { if (src && !photoChanged) { photo = src; drawPhoto(); } });
+      $("#y-photo-rm").addEventListener("click", () => { photo = ""; photoChanged = true; drawPhoto(); });
       $("#y-photo-rot").addEventListener("click", async (e) => {
         const b = e.currentTarget; if (!photo || b.disabled) return; b.disabled = true;
-        try { photo = await rotatePhoto(photo); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+        try { photo = await rotatePhoto(photo); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
         b.disabled = false; drawPhoto();
       });
       $("#y-file").addEventListener("change", async (e) => {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = $("#y-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        try { photo = await shrinkPhoto(f); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; drawPhoto();
       });
       $("#y-cancel").addEventListener("click", closeSheet);
@@ -1545,11 +1661,13 @@ import {
           notes: $("#y-notes").value.trim(), createdAt: y.createdAt || Date.now(),
         };
         if (!data.name && !data.brand && !data.color) { $("#y-title").focus(); toast("Give the yarn a name, brand or color.", "warn"); return; }
-        if (photo) data.photo = photo;
-        if (await api.saveYarn(y.id || uid(), data)) { closeSheet(); toast(isNew ? "Yarn added" : "Saved", "ok"); }
+        let oldPhoto = "";
+        if (!photoChanged) { if (y.photoId) data.photoId = y.photoId; else if (y._inlinePhoto) data.photo = y._inlinePhoto; }
+        else { if (photo) data.photoId = storePhoto(photo); oldPhoto = y.photoId || ""; }
+        if (await api.saveYarn(y.id || uid(), data)) { dropPhoto(oldPhoto); closeSheet(); toast(isNew ? "Yarn added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete($("#y-del"), "Delete", async () => {
-        if (await api.deleteYarn(y.id)) { closeSheet(); toast("Yarn deleted", "ok"); }
+        if (await api.deleteYarn(y.id)) { dropPhoto(y.photoId); closeSheet(); toast("Yarn deleted", "ok"); }
       });
     }, { big: true });
   }
@@ -1741,6 +1859,7 @@ import {
         + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(typed)}”.</p>`);
     };
     draw();
+    Promise.all(products.filter((p) => p.photoId && !photoCache.has(p.photoId)).map((p) => loadPhoto(p.photoId))).then((got) => { if (got.length && ov.isConnected) draw(); });
     q.addEventListener("input", draw);
     ov.addEventListener("click", (e) => {
       if (e.target === ov || e.target.closest("[data-close]")) return ov.remove();
@@ -1762,7 +1881,7 @@ import {
   function productSheet(p) {
     const isNew = !p;
     p = p || { name: "", price: "", cost: "", stock: 0, hours: "", notes: "", color: YARN[Math.floor(Math.random() * 8)] };
-    let color = p.color, photo = p.photo || "";
+    let color = p.color, photo = p.photo || "", photoChanged = false;
     openSheet(`
       <h3>${isNew ? "Add a plushie" : "Edit plushie"}</h3>
       <form id="pform" class="fgrid" novalidate>
@@ -1841,17 +1960,18 @@ import {
         bcIn.value = code; showBarcode(); toast(`Barcode ${code} added`, "ok");
       }, { once: true }));
       el.querySelector("#p-photo-btn").addEventListener("click", () => el.querySelector("#p-file").click());
-      el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; showPhoto(); });
+      if (!photo && p.photoId) loadPhoto(p.photoId).then((src) => { if (src && !photoChanged) { photo = src; showPhoto(); } });
+      el.querySelector("#p-photo-rm").addEventListener("click", () => { photo = ""; photoChanged = true; showPhoto(); });
       el.querySelector("#p-photo-rot").addEventListener("click", async (e) => {
         const b = e.currentTarget; if (!photo || b.disabled) return; b.disabled = true;
-        try { photo = await rotatePhoto(photo); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+        try { photo = await rotatePhoto(photo); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
         b.disabled = false; showPhoto();
       });
       el.querySelector("#p-file").addEventListener("change", async (e) => {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = el.querySelector("#p-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        try { photo = await shrinkPhoto(f); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; showPhoto();
       });
       el.querySelector("#p-colors").addEventListener("click", (e) => {
@@ -1879,7 +1999,9 @@ import {
           color,
           createdAt: p.createdAt || Date.now(),
         };
-        if (photo) data.photo = photo;
+        let oldPhoto = "";
+        if (!photoChanged) { if (p.photoId) data.photoId = p.photoId; else if (p._inlinePhoto) data.photo = p._inlinePhoto; }
+        else { if (photo) data.photoId = storePhoto(photo); oldPhoto = p.photoId || ""; }
         if (pattern) data.pattern = pattern;
         if (barcode) data.barcode = barcode;
         if (p.example) data.example = true;
@@ -1888,10 +2010,10 @@ import {
         const keep = (Array.isArray(p.yarns) ? p.yarns : []).filter((u) => !yarnById(u.yarnId));
         data.yarns = [...yarns.map((u) => ({ yarnId: u.yarnId, amount: +u.amount > 0 ? round2(u.amount) : 0 })), ...keep];
         const ok = await api.saveProduct(p.id || uid(), data);
-        if (ok) { closeSheet(); toast(isNew ? "Plushie added" : "Saved", "ok"); }
+        if (ok) { dropPhoto(oldPhoto); closeSheet(); toast(isNew ? "Plushie added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete(el.querySelector("#p-del"), "Delete", async () => {
-        if (await api.deleteProduct(p.id)) { closeSheet(); toast("Plushie deleted. Its past sales stay in your history.", "ok"); }
+        if (await api.deleteProduct(p.id)) { dropPhoto(p.photoId); closeSheet(); toast("Plushie deleted. Its past sales stay in your history.", "ok"); }
       });
     }, { big: true });
   }
@@ -1955,15 +2077,18 @@ import {
       $("#e-fee").addEventListener("input", costTotal);
       if (addCost) setTimeout(() => $("#e-costs-wrap").scrollIntoView({ block: "center" }), 50);
       // Booth photos: add several at once (up to EV_PHOTOS_MAX), turn or remove each
-      let photos = Array.isArray(ev.photos) ? ev.photos.slice(0, EV_PHOTOS_MAX) : [];
+      // each photo: { id } once stored, { src } once loaded; new or turned photos get stored as new ones on Save
+      const photos = Array.isArray(ev.photoIds) ? ev.photoIds.slice(0, EV_PHOTOS_MAX).map((id) => ({ id, src: photoCache.get(id) || "" }))
+        : (ev._inlinePhotos || []).slice(0, EV_PHOTOS_MAX).map((src) => ({ id: "", src }));
       const pBox = $("#e-photos"), fileIn = $("#e-file");
       const drawPhotos = () => {
-        pBox.innerHTML = photos.map((src, i) => `<div class="ev-photo" data-i="${i}"><img src="${esc(src)}" alt="Booth photo ${i + 1}">
+        pBox.innerHTML = photos.map((ph, i) => `<div class="ev-photo" data-i="${i}">${ph.src ? `<img src="${esc(ph.src)}" alt="Booth photo ${i + 1}">` : `<div class="ev-loading">Loading…</div>`}
             <div class="ev-photo-acts"><button type="button" class="ev-rot" aria-label="Rotate photo ${i + 1}">↻</button><button type="button" class="ev-rm" aria-label="Remove photo ${i + 1}">×</button></div></div>`).join("")
           + (photos.length < EV_PHOTOS_MAX ? `<button type="button" class="ev-add" id="e-photo-add"><span aria-hidden="true">+</span>${photos.length ? "Add photo" : "Add photos of your setup"}</button>` : "")
           + `<div class="ev-photo-note">${photos.length}/${EV_PHOTOS_MAX} photos</div>`;
       };
       drawPhotos();
+      for (const ph of photos) if (!ph.src && ph.id) loadPhoto(ph.id).then((src) => { ph.src = src; drawPhotos(); });
       pBox.addEventListener("click", async (e) => {
         if (e.target.closest("#e-photo-add")) return fileIn.click();
         const tile = e.target.closest(".ev-photo"); if (!tile) return;
@@ -1971,10 +2096,10 @@ import {
         if (e.target.closest(".ev-rm")) { photos.splice(i, 1); drawPhotos(); return; }
         if (e.target.closest(".ev-rot")) {
           const b = e.target.closest(".ev-rot"); if (b.disabled) return; b.disabled = true;
-          try { photos[i] = await rotatePhoto(photos[i]); } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); }
+          if (photos[i].src) { try { photos[i] = { id: "", src: await rotatePhoto(photos[i].src) }; } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); } }
           drawPhotos(); return;
         }
-        showPhoto({ name: `${$("#e-title").value.trim() || "Event"} · photo ${i + 1}`, photo: photos[i] });
+        if (photos[i].src) showPhoto({ name: `${$("#e-title").value.trim() || "Event"} · photo ${i + 1}`, photo: photos[i].src });
       });
       fileIn.addEventListener("change", async (e) => {
         const files = [...(e.target.files || [])]; e.target.value = "";
@@ -1982,7 +2107,7 @@ import {
         const room = EV_PHOTOS_MAX - photos.length;
         if (files.length > room) toast(`Only ${EV_PHOTOS_MAX} photos fit on an event, so ${room ? `the first ${room} were added` : "none were added"}.`, "warn");
         for (const f of files.slice(0, room)) {
-          try { photos.push(await shrinkPhoto(f)); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+          try { photos.push({ id: "", src: await shrinkPhoto(f) }); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
           drawPhotos();
         }
       });
@@ -1996,12 +2121,14 @@ import {
         if (end < start) [start, end] = [end, start];
         const expenses = costs.map((c) => ({ what: c.what.trim() || "Other", amount: round2(c.amount) })).filter((c) => c.amount > 0);
         const data = { name, start, end, location: $("#e-loc").value.trim(), fee: round2($("#e-fee").value), expenses, notes: $("#e-notes").value.trim(), createdAt: ev.createdAt || Date.now() };
-        if (photos.length) data.photos = photos;
+        const photoIds = photos.map((ph) => ph.id || (ph.src ? storePhoto(ph.src) : "")).filter(Boolean);
+        if (photoIds.length) data.photoIds = photoIds;
+        const gone = (Array.isArray(ev.photoIds) ? ev.photoIds : []).filter((id) => !photoIds.includes(id));
         if (ev.example) data.example = true;
-        if (await api.saveEvent(ev.id || uid(), data)) { closeSheet(); toast(isNew ? "Event added" : "Saved", "ok"); }
+        if (await api.saveEvent(ev.id || uid(), data)) { gone.forEach(dropPhoto); closeSheet(); toast(isNew ? "Event added" : "Saved", "ok"); }
       });
       if (!isNew) armDelete($("#e-del"), "Delete", async () => {
-        if (await api.deleteEvent(ev.id)) { closeSheet(); toast("Event deleted. Its sales stay in your history.", "ok"); }
+        if (await api.deleteEvent(ev.id)) { (Array.isArray(ev.photoIds) ? ev.photoIds : []).forEach(dropPhoto); closeSheet(); toast("Event deleted. Its sales stay in your history.", "ok"); }
       });
     }, { big: true });
   }
