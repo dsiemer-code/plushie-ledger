@@ -328,6 +328,27 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .lb-cap { color: #fff; font-weight: 600; text-align: center; }
 .lb-close { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 16px; background: rgba(255,255,255,.92); }
 @media (prefers-reduced-motion: no-preference) { .lightbox { animation: lbfade .15s ease-out; } @keyframes lbfade { from { opacity: 0; } } }
+/* Crop screen for a new photo (same as the pottery tracker) */
+.cropper { position: fixed; inset: 0; z-index: 55; background: #120D0A; color: #fff; display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.crop-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; font-weight: 600; text-align: center; }
+.cropper .btn.ghost { color: #fff; border-color: rgba(255,255,255,.4); background: transparent; }
+.crop-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 18px 28px; }
+.crop-wrap { position: relative; line-height: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.crop-wrap img { display: block; max-width: calc(100vw - 56px); max-height: calc(100vh - 210px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); -webkit-user-drag: none; pointer-events: none; }
+@supports (height: 100dvh) { .crop-wrap img { max-height: calc(100dvh - 210px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); } }
+.crop-box { position: absolute; box-shadow: 0 0 0 9999px rgba(0,0,0,.6); outline: 2px solid #fff; cursor: move; }
+.crop-box i { position: absolute; width: 26px; height: 26px; border: 4px solid #fff; }
+.crop-box i::before { content: ""; position: absolute; inset: -14px; }
+.crop-box [data-h=nw] { left: 0; top: 0; border-right: 0; border-bottom: 0; cursor: nwse-resize; }
+.crop-box [data-h=ne] { right: 0; top: 0; border-left: 0; border-bottom: 0; cursor: nesw-resize; }
+.crop-box [data-h=sw] { left: 0; bottom: 0; border-right: 0; border-top: 0; cursor: nesw-resize; }
+.crop-box [data-h=se] { right: 0; bottom: 0; border-left: 0; border-top: 0; cursor: nwse-resize; }
+.crop-foot { padding: 6px 16px 14px; display: grid; gap: 10px; justify-items: center; text-align: center; }
+.crop-foot p { margin: 0; color: rgba(255,255,255,.75); font-size: .9rem; }
+.crop-foot div { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.crop-foot [data-msg] { min-height: 1.4em; }
+.cropper .btn:disabled { opacity: .5; }
 .sq-landing { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 24px; }
 .sq-card { max-width: 420px; text-align: center; display: grid; gap: 12px; justify-items: center; }
 .sq-card h2 { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; }
@@ -419,7 +440,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .salerow { cursor: pointer; }
 .salerow:hover .title { color: var(--accent); }
 
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 48;
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 60;
   display: flex; align-items: center; gap: 10px; width: max-content; max-width: calc(100% - 32px);
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: .9rem; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
 /* Saves get a big green confirmation so it's obvious they worked; problems get amber, failures red */
@@ -563,6 +584,174 @@ import {
     while (out.length > 200000 && q > 0.45) { q -= 0.1; out = c.toDataURL("image/jpeg", q); }
     return out;
   }
+  // ---------- Cropping and background removal (brought over from the pottery tracker) ----------
+  const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  // Same size cap as every stored photo
+  function canvasJpeg(c) {
+    let q = 0.85, out = c.toDataURL("image/jpeg", q);
+    while (out.length > 200000 && q > 0.45) { q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+    return out;
+  }
+  // A new photo opens at up to 1800px so a tight crop keeps its detail; the kept part is then shrunk to the usual 640px.
+  async function openLarge(file, max = 1800) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await loadImg(url);
+      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", 0.92);
+    } finally { URL.revokeObjectURL(url); }
+  }
+  // r = { x, y, w, h } as fractions of the photo
+  async function cutPhoto(src, r, max = 640) {
+    const img = await loadImg(src);
+    const sx = r.x * img.naturalWidth, sy = r.y * img.naturalHeight, sw = r.w * img.naturalWidth, sh = r.h * img.naturalHeight;
+    const s = Math.min(1, max / Math.max(sw, sh));
+    const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(sw * s)); c.height = Math.max(1, Math.round(sh * s));
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return canvasJpeg(c);
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  // IMG.LY's background removal runs on the phone itself (nothing is uploaded). It's only loaded the first time
+  // she uses it: about 56 MB (the program plus the model), which the browser keeps for next time.
+  const BG_LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
+  let bgLib = null;
+  // Returns { src, box }: the photo on white, and where the piece is in it (fractions) so the crop can start there
+  async function removeBg(src, onProgress) {
+    if (!bgLib) bgLib = import(BG_LIB).catch((e) => { bgLib = null; throw e; });
+    const { removeBackground } = await bgLib;
+    const blob = await removeBackground(src, { model: "isnet_quint8", output: { format: "image/png" }, progress: (key, cur, total) => onProgress && onProgress(key, cur, total) });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await loadImg(url);
+      const W = img.naturalWidth, H = img.naturalHeight;
+      const c = document.createElement("canvas"); c.width = W; c.height = H;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      // Clean up: keep the piece (the biggest solid shape, plus any others nearly as big, like a set of plushies)
+      // and clear the faint specks the remover sometimes leaves behind. Works on a 4px grid to stay quick.
+      const id = ctx.getImageData(0, 0, W, H), a = id.data, S = 4, gw = Math.ceil(W / S), gh = Math.ceil(H / S);
+      const solid = new Uint8Array(gw * gh), comp = new Int32Array(gw * gh).fill(-1), sizes = [];
+      for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) solid[gy * gw + gx] = a[((gy * S) * W + gx * S) * 4 + 3] > 128 ? 1 : 0;
+      for (let i = 0; i < solid.length; i++) {
+        if (!solid[i] || comp[i] >= 0) continue;
+        const n = sizes.length, stack = [i]; comp[i] = n; let size = 0;
+        while (stack.length) {
+          const j = stack.pop(); size++;
+          const jx = j % gw, jy = (j - jx) / gw;
+          for (const k of [jx > 0 ? j - 1 : -1, jx < gw - 1 ? j + 1 : -1, jy > 0 ? j - gw : -1, jy < gh - 1 ? j + gw : -1])
+            if (k >= 0 && solid[k] && comp[k] < 0) { comp[k] = n; stack.push(k); }
+        }
+        sizes.push(size);
+      }
+      if (!sizes.length) { ctx.globalCompositeOperation = "destination-over"; ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H); return { src: c.toDataURL("image/jpeg", 0.92), box: null }; }
+      const biggest = Math.max(...sizes), keepComp = sizes.map((z) => z >= biggest * 0.15);
+      // Cells to keep: the kept shapes, grown by 2 cells so soft edges (fuzzy yarn) survive
+      const keep = new Uint8Array(gw * gh);
+      let x0 = gw, y0 = gh, x1 = -1, y1 = -1;
+      for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+        const ci = comp[gy * gw + gx]; if (ci < 0 || !keepComp[ci]) continue;
+        if (gx < x0) x0 = gx; if (gx > x1) x1 = gx; if (gy < y0) y0 = gy; if (gy > y1) y1 = gy;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const nx = gx + dx, ny = gy + dy; if (nx >= 0 && ny >= 0 && nx < gw && ny < gh) keep[ny * gw + nx] = 1; }
+      }
+      for (let y = 0; y < H; y++) { const row = ((y / S) | 0) * gw; for (let x = 0; x < W; x++) if (!keep[row + ((x / S) | 0)]) a[(y * W + x) * 4 + 3] = 0; }
+      ctx.putImageData(id, 0, 0);
+      ctx.globalCompositeOperation = "destination-over"; ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+      const out = c.toDataURL("image/jpeg", 0.92);
+      // Start the crop around the piece, with a little room
+      const px0 = x0 * S, py0 = y0 * S, px1 = Math.min(W, (x1 + 1) * S), py1 = Math.min(H, (y1 + 1) * S);
+      const pad = 0.08 * Math.max(px1 - px0, py1 - py0);
+      const bx = Math.max(0, px0 - pad), by = Math.max(0, py0 - pad), bw = Math.min(W, px1 + pad) - bx, bh = Math.min(H, py1 + pad) - by;
+      return { src: out, box: { x: bx / W, y: by / H, w: bw / W, h: bh / H } };
+    } finally { URL.revokeObjectURL(url); }
+  }
+  // Shows the photo with a box she can drag and resize, and a button to take the background out.
+  // Resolves with the finished photo, or "" if she cancels.
+  function cropPhoto(src, title = "Crop the photo") {
+    return new Promise((resolve) => {
+      const full = { x: 0, y: 0, w: 1, h: 1 }, MIN = 0.08, original = src;
+      let r = { ...full }, drag = null, working = false;
+      const root = document.createElement("div");
+      root.className = "cropper"; root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", title);
+      root.innerHTML = `
+        <div class="crop-head"><button type="button" class="btn ghost small" data-c="cancel">Cancel</button><span>${esc(title)}</span><button type="button" class="btn small" data-c="done">Use photo</button></div>
+        <div class="crop-stage"><div class="crop-wrap"><img src="${esc(src)}" alt="" draggable="false"><div class="crop-box">${["nw", "ne", "sw", "se"].map((h) => `<i data-h="${h}"></i>`).join("")}</div></div></div>
+        <div class="crop-foot"><p data-msg>Drag a corner to crop. Drag inside the box to move it.</p>
+          <div><button type="button" class="btn ghost small" data-c="bg">Remove background</button></div>
+          <div><button type="button" class="btn ghost small" data-c="square">Square</button><button type="button" class="btn ghost small" data-c="whole">Whole photo</button></div></div>`;
+      document.body.appendChild(root);
+      const wrap = root.querySelector(".crop-wrap"), box = root.querySelector(".crop-box"), img = root.querySelector("img");
+      const msg = root.querySelector("[data-msg]"), bgBtn = root.querySelector("[data-c=bg]");
+      const HINT = msg.textContent;
+      const draw = () => Object.assign(box.style, { left: r.x * 100 + "%", top: r.y * 100 + "%", width: r.w * 100 + "%", height: r.h * 100 + "%" });
+      draw();
+      wrap.addEventListener("pointerdown", (e) => {
+        const h = e.target.closest("[data-h]");
+        if (working || (!h && !e.target.closest(".crop-box"))) return;
+        e.preventDefault(); wrap.setPointerCapture(e.pointerId);
+        drag = { h: h ? h.dataset.h : "move", x: e.clientX, y: e.clientY, r: { ...r }, W: wrap.clientWidth, H: wrap.clientHeight };
+      });
+      wrap.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const dx = (e.clientX - drag.x) / drag.W, dy = (e.clientY - drag.y) / drag.H, o = drag.r;
+        let { x, y, w, h } = o;
+        if (drag.h === "move") { x = clamp(o.x + dx, 0, 1 - o.w); y = clamp(o.y + dy, 0, 1 - o.h); }
+        else {
+          if (drag.h.includes("w")) { x = clamp(o.x + dx, 0, o.x + o.w - MIN); w = o.x + o.w - x; }
+          if (drag.h.includes("e")) w = clamp(o.w + dx, MIN, 1 - o.x);
+          if (drag.h.includes("n")) { y = clamp(o.y + dy, 0, o.y + o.h - MIN); h = o.y + o.h - y; }
+          if (drag.h.includes("s")) h = clamp(o.h + dy, MIN, 1 - o.y);
+        }
+        r = { x, y, w, h }; draw();
+      });
+      const end = () => { drag = null; };
+      wrap.addEventListener("pointerup", end); wrap.addEventListener("pointercancel", end);
+      const finish = (val) => { root.remove(); resolve(val); };
+      const busy = (on) => { working = on; root.querySelectorAll("[data-c]").forEach((b) => { if (b.dataset.c !== "cancel") b.disabled = on; }); };
+      async function takeOutBackground() {
+        busy(true); bgBtn.textContent = "Removing background…";
+        msg.textContent = "Getting ready…";
+        try {
+          const res = await removeBg(src, (key, cur, total) => {
+            if (!root.isConnected) return;
+            if (String(key).startsWith("fetch")) msg.textContent = `First time only: downloading the background remover… ${total ? Math.round((cur / total) * 100) : 0}%`;
+            else msg.textContent = "Finding the plushie… this can take a little while.";
+          });
+          if (!root.isConnected) return;
+          src = res.src; img.src = src;
+          if (res.box) { r = res.box; draw(); }
+          bgBtn.textContent = "Put background back"; bgBtn.dataset.on = "1";
+          msg.textContent = "Background removed. Adjust the crop if you like.";
+        } catch (ex) {
+          console.error(ex);
+          bgBtn.textContent = "Remove background"; msg.textContent = HINT;
+          toast(navigator.onLine ? "Couldn't remove the background from this photo." : "Removing the background needs a connection the first time.", "err");
+        }
+        busy(false);
+      }
+      root.addEventListener("click", async (e) => {
+        const b = e.target.closest("[data-c]"); if (!b || b.disabled) return;
+        const c = b.dataset.c;
+        if (c === "cancel") return finish("");
+        if (c === "whole") { r = { ...full }; return draw(); }
+        if (c === "square") {
+          const W = img.naturalWidth || 1, H = img.naturalHeight || 1, side = Math.min(W, H);
+          r = { w: side / W, h: side / H, x: (1 - side / W) / 2, y: (1 - side / H) / 2 }; return draw();
+        }
+        if (c === "bg") {
+          if (b.dataset.on) { src = original; img.src = src; r = { ...full }; draw(); delete b.dataset.on; b.textContent = "Remove background"; msg.textContent = HINT; return; }
+          return takeOutBackground();
+        }
+        busy(true); b.textContent = "Saving…";
+        try { finish(await cutPhoto(src, r)); } catch (ex) { console.error(ex); toast("Couldn't crop that photo.", "err"); finish(""); }
+      });
+      root.querySelector("[data-c=done]").focus();
+    });
+  }
+  // A photo she just picked: open it, let her crop it, and return the finished photo ("" if she cancelled)
+  async function cropNewPhoto(file, title) { return cropPhoto(await openLarge(file), title); }
+
   async function shrinkPhoto(file) {
     const url = URL.createObjectURL(file);
     try {
@@ -1606,6 +1795,7 @@ import {
           <div id="y-photo-box"></div>
           <div class="opts">
             <button class="btn ghost small" type="button" id="y-photo-btn"></button>
+            <button class="btn ghost small" type="button" id="y-photo-crop" aria-label="Crop photo or remove its background">✂ Crop</button>
             <button class="btn ghost small" type="button" id="y-photo-rot" aria-label="Rotate photo a quarter turn">↻ Rotate</button>
             <button class="linkbtn" type="button" id="y-photo-rm">Remove photo</button>
             <input class="vh" type="file" id="y-file" accept="image/*" tabindex="-1" aria-hidden="true">
@@ -1632,6 +1822,7 @@ import {
         $("#y-photo-btn").textContent = photo ? "Change photo" : "Add photo";
         $("#y-photo-rm").hidden = !photo;
         $("#y-photo-rot").hidden = !photo;
+        $("#y-photo-crop").hidden = !photo;
       };
       const total = () => { const c = +$("#y-cost").value || 0, n = +$("#y-qty").value || 0; $("#y-total").textContent = c && n ? `${n} × ${fmt(c)} = ${fmt(round2(c * n))}` : ""; };
       drawPhoto(); total();
@@ -1648,8 +1839,13 @@ import {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = $("#y-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        try { const out = await cropNewPhoto(f, "Crop the yarn photo"); if (out) { photo = out; photoChanged = true; } } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; drawPhoto();
+      });
+      $("#y-photo-crop").addEventListener("click", async () => {
+        if (!photo) return;
+        const out = await cropPhoto(photo, "Crop the yarn photo");
+        if (out) { photo = out; photoChanged = true; drawPhoto(); }
       });
       $("#y-cancel").addEventListener("click", closeSheet);
       $("#yform").addEventListener("submit", async (e) => {
@@ -1781,6 +1977,7 @@ import {
   function closeSheet() { document.getElementById("sheet-root").innerHTML = ""; }
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const crop = document.querySelector(".cropper"); if (crop) { crop.querySelector("[data-c=cancel]").click(); return; }
     const lb = document.querySelector(".lightbox"); if (lb) { lb.remove(); return; }
     const picker = document.querySelector(".picker-ov");
     if (picker) picker.remove(); else closeSheet();
@@ -1889,6 +2086,7 @@ import {
           <div id="p-photo-box"></div>
           <div class="opts">
             <button class="btn ghost small" type="button" id="p-photo-btn"></button>
+            <button class="btn ghost small" type="button" id="p-photo-crop" aria-label="Crop photo or remove its background">✂ Crop</button>
             <button class="btn ghost small" type="button" id="p-photo-rot" aria-label="Rotate photo a quarter turn">↻ Rotate</button>
             <button class="linkbtn" type="button" id="p-photo-rm">Remove photo</button>
             <input class="vh" type="file" id="p-file" accept="image/*" tabindex="-1" aria-hidden="true">
@@ -1927,6 +2125,7 @@ import {
         el.querySelector("#p-photo-btn").textContent = photo ? "Change photo" : "Add photo";
         el.querySelector("#p-photo-rm").hidden = !photo;
         el.querySelector("#p-photo-rot").hidden = !photo;
+        el.querySelector("#p-photo-crop").hidden = !photo;
       };
       showPhoto();
       // Yarn used: chosen from her Yarn tab, each with optional skeins per plushie
@@ -1971,8 +2170,13 @@ import {
         const f = e.target.files && e.target.files[0]; e.target.value = "";
         if (!f) return;
         const btn = el.querySelector("#p-photo-btn"); btn.disabled = true; btn.textContent = "Loading…";
-        try { photo = await shrinkPhoto(f); photoChanged = true; } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        try { const out = await cropNewPhoto(f, "Crop the plushie photo"); if (out) { photo = out; photoChanged = true; } } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
         btn.disabled = false; showPhoto();
+      });
+      el.querySelector("#p-photo-crop").addEventListener("click", async () => {
+        if (!photo) return;
+        const out = await cropPhoto(photo, "Crop the plushie photo");
+        if (out) { photo = out; photoChanged = true; showPhoto(); }
       });
       el.querySelector("#p-colors").addEventListener("click", (e) => {
         const b = e.target.closest("button[data-c]"); if (!b) return;
@@ -2083,7 +2287,7 @@ import {
       const pBox = $("#e-photos"), fileIn = $("#e-file");
       const drawPhotos = () => {
         pBox.innerHTML = photos.map((ph, i) => `<div class="ev-photo" data-i="${i}">${ph.src ? `<img src="${esc(ph.src)}" alt="Booth photo ${i + 1}">` : `<div class="ev-loading">Loading…</div>`}
-            <div class="ev-photo-acts"><button type="button" class="ev-rot" aria-label="Rotate photo ${i + 1}">↻</button><button type="button" class="ev-rm" aria-label="Remove photo ${i + 1}">×</button></div></div>`).join("")
+            <div class="ev-photo-acts"><button type="button" class="ev-crop" aria-label="Crop photo ${i + 1}">✂</button><button type="button" class="ev-rot" aria-label="Rotate photo ${i + 1}">↻</button><button type="button" class="ev-rm" aria-label="Remove photo ${i + 1}">×</button></div></div>`).join("")
           + (photos.length < EV_PHOTOS_MAX ? `<button type="button" class="ev-add" id="e-photo-add"><span aria-hidden="true">+</span>${photos.length ? "Add photo" : "Add photos of your setup"}</button>` : "")
           + `<div class="ev-photo-note">${photos.length}/${EV_PHOTOS_MAX} photos</div>`;
       };
@@ -2094,6 +2298,12 @@ import {
         const tile = e.target.closest(".ev-photo"); if (!tile) return;
         const i = +tile.dataset.i;
         if (e.target.closest(".ev-rm")) { photos.splice(i, 1); drawPhotos(); return; }
+        if (e.target.closest(".ev-crop")) {
+          if (!photos[i].src) return;
+          const out = await cropPhoto(photos[i].src, "Crop the booth photo");
+          if (out) { photos[i] = { id: "", src: out }; drawPhotos(); }
+          return;
+        }
         if (e.target.closest(".ev-rot")) {
           const b = e.target.closest(".ev-rot"); if (b.disabled) return; b.disabled = true;
           if (photos[i].src) { try { photos[i] = { id: "", src: await rotatePhoto(photos[i].src) }; } catch (ex) { console.error(ex); toast("Couldn't rotate that photo.", "warn"); } }
@@ -2106,8 +2316,10 @@ import {
         if (!files.length) return;
         const room = EV_PHOTOS_MAX - photos.length;
         if (files.length > room) toast(`Only ${EV_PHOTOS_MAX} photos fit on an event, so ${room ? `the first ${room} were added` : "none were added"}.`, "warn");
-        for (const f of files.slice(0, room)) {
-          try { photos.push({ id: "", src: await shrinkPhoto(f) }); } catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        const take = files.slice(0, room);
+        for (const [n, f] of take.entries()) {
+          try { const out = await cropNewPhoto(f, take.length > 1 ? `Booth photo ${n + 1} of ${take.length}` : "Crop the booth photo"); if (out) photos.push({ id: "", src: out }); }
+          catch (ex) { console.error(ex); toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
           drawPhotos();
         }
       });
@@ -2999,7 +3211,7 @@ import {
   function busy() {
     var sheet = document.getElementById("sheet-root");
     if (sheet && sheet.children.length) return true;
-    if (document.querySelector(".scanner")) return true;
+    if (document.querySelector(".scanner, .cropper")) return true;
     var a = document.activeElement;
     return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
   }
