@@ -2756,8 +2756,10 @@ import {
         const ln = lines[i]; if (!ln) return;
         ln.productId = id;
         const p = productById(id);
-        if (p) ln.price = p.price || p.price === 0 ? p.price : ""; // default price, which she can type over
-        if (id === "__new") { ln.newName = name || ln.newName || ""; ln.price = ""; }
+        // A line already recorded keeps what it actually sold for; a new line starts at the plushie's price, which she can type over
+        const keepPrice = !!ln.docId && ln.price !== "" && ln.price != null;
+        if (p && !keepPrice) ln.price = p.price || p.price === 0 ? p.price : "";
+        if (id === "__new") { ln.newName = name || ln.newName || ""; if (!keepPrice) ln.price = ""; }
         renderLines();
         const row = box.querySelectorAll(".line")[i];
         if (id === "__new") row.querySelector(ln.newName ? ".l-pricein" : ".l-newtitle").focus();
