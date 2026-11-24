@@ -1585,6 +1585,25 @@ import {
     return n ? `<section class="panel dup-banner"><div><b>🔎 ${n} pair${n === 1 ? "" : "s"} of plushies might be the same</b><div class="sub" style="font-size:.82rem;color:var(--muted)">Names written differently in old notes, like Possum and Opossum</div></div>
       <button class="btn small" type="button" data-act="dups">Review</button></section>` : "";
   }
+  // Fold plushie D (or sale lines with no plushie, when D is null) into plushie K: the sales move over keeping
+  // their prices, stock adds up, and K takes D's photo, price, cost, barcode and yarn where it has none. D is removed.
+  async function mergeProducts(K, D, lines) {
+    const ops = lines.map((x) => ({ col: "sales", id: x.id, kind: "update", data: { productId: K.id, productName: K.name, color: K.color || "" } }));
+    let photoMoved = false;
+    if (D) {
+      const kd = { stock: (K.stock || 0) + (D.stock || 0) };
+      if (!K.photoId && !K._inlinePhoto && D.photoId) { kd.photoId = D.photoId; photoMoved = true; }
+      if (!(+K.price) && +D.price) kd.price = D.price;
+      if (!(+K.cost) && +D.cost) kd.cost = D.cost;
+      if (!K.barcode && D.barcode) kd.barcode = D.barcode;
+      const ky = Array.isArray(K.yarns) ? K.yarns : [], dy = Array.isArray(D.yarns) ? D.yarns : [];
+      if (dy.some((u) => !ky.some((v) => v.yarnId === u.yarnId))) kd.yarns = [...ky, ...dy.filter((u) => !ky.some((v) => v.yarnId === u.yarnId))];
+      ops.push({ col: "products", id: K.id, kind: "update", data: kd }, { col: "products", id: D.id, kind: "delete" });
+    }
+    if (!(await api.applyOps(ops))) return false;
+    if (D && D.photoId && !photoMoved) dropPhoto(D.photoId);
+    return true;
+  }
   function dupSheet() {
     const gone = new Set();
     openSheet(`<h3>Plushies that might be the same</h3>
@@ -1633,20 +1652,7 @@ import {
         const K = productById(keepIt.id); if (!K) return;
         const D = dropIt.id ? productById(dropIt.id) : null, lines = info(dropIt).lines;
         kb.disabled = true;
-        const ops = lines.map((x) => ({ col: "sales", id: x.id, kind: "update", data: { productId: K.id, productName: K.name, color: K.color || "" } }));
-        let photoMoved = false;
-        if (D) {
-          const kd = { stock: (K.stock || 0) + (D.stock || 0) };
-          if (!K.photoId && !K._inlinePhoto && D.photoId) { kd.photoId = D.photoId; photoMoved = true; }
-          if (!(+K.price) && +D.price) kd.price = D.price;
-          if (!(+K.cost) && +D.cost) kd.cost = D.cost;
-          if (!K.barcode && D.barcode) kd.barcode = D.barcode;
-          const ky = Array.isArray(K.yarns) ? K.yarns : [], dy = Array.isArray(D.yarns) ? D.yarns : [];
-          if (dy.some((u) => !ky.some((v) => v.yarnId === u.yarnId))) kd.yarns = [...ky, ...dy.filter((u) => !ky.some((v) => v.yarnId === u.yarnId))];
-          ops.push({ col: "products", id: K.id, kind: "update", data: kd }, { col: "products", id: D.id, kind: "delete" });
-        }
-        if (await api.applyOps(ops)) {
-          if (D && D.photoId && !photoMoved) dropPhoto(D.photoId);
+        if (await mergeProducts(K, D, lines)) {
           gone.add(dropIt.id || dropIt.name); dupMemo.key = "";
           toast(`Merged into ${K.name}${lines.length ? ` · ${lines.length} sale${lines.length === 1 ? "" : "s"} moved` : ""}`, "ok");
           draw();
@@ -2259,8 +2265,8 @@ import {
     if (matchMedia("(pointer: fine)").matches) q.focus();
   }
   // filter: true turns it into a "show sales for" chooser: an "All plushies" row instead of "New plushie", and sold counts
-  function pickProduct(products, currentId, onPick, { filter = false } = {}) {
-    const title = filter ? "Show sales for" : "Choose a plushie";
+  function pickProduct(products, currentId, onPick, { filter = false, title: heading = "", noNew = false } = {}) {
+    const title = heading || (filter ? "Show sales for" : "Choose a plushie");
     const sold = filter ? soldByProduct() : null;
     const ov = document.createElement("div");
     ov.className = "picker-ov";
@@ -2289,7 +2295,7 @@ import {
       const typed = q.value.trim(), t = typed.toLowerCase();
       const hits = t ? products.filter((p) => (p.name || "").toLowerCase().includes(t)) : products;
       const exact = hits.some((p) => (p.name || "").trim().toLowerCase() === t);
-      list.innerHTML = (filter ? (typed ? "" : allRow()) : exact ? "" : newRow(typed))
+      list.innerHTML = (filter ? (typed ? "" : allRow()) : exact || noNew ? "" : newRow(typed))
         + rows(hits)
         + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(typed)}”.</p>`);
     };
@@ -2353,6 +2359,12 @@ import {
         </div>
         <label class="f full">Pattern link<input id="p-pattern" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(p.pattern)}" placeholder="Paste the pattern's web address"></label>
         <label class="f full">Notes<textarea id="p-notes" placeholder="Yarn brand, size, hook">${esc(p.notes)}</textarea></label>
+        ${isNew || state.readOnly ? "" : (() => {
+          const n = state.sales.filter((x) => x.productId === p.id).length;
+          return `<div class="f full merge-box" id="p-merge-box"><span>Same as another plushie?</span>
+            <div class="sub" style="font-size:.82rem;color:var(--muted);margin:2px 0 8px">Move ${n ? `its ${n} sale${n === 1 ? "" : "s"}` : "it"} onto another plushie and remove this one. Each sale keeps the price it sold for${p.stock ? `, and its ${p.stock} in stock are added there` : ""}.</div>
+            <div id="p-merge-acts"><button type="button" class="btn ghost small" id="p-merge">Move to another plushie…</button></div></div>`;
+        })()}
       </form>
       <div class="actions">
         ${isNew ? "" : `<button class="btn danger" id="p-del" type="button">Delete</button>`}
@@ -2453,6 +2465,27 @@ import {
         data.yarns = [...yarns.map((u) => ({ yarnId: u.yarnId, amount: +u.amount > 0 ? round2(u.amount) : 0 })), ...keep];
         const ok = await api.saveProduct(p.id || uid(), data);
         if (ok) { dropPhoto(oldPhoto); closeSheet(); toast(isNew ? "Plushie added" : "Saved", "ok"); }
+      });
+      // Move every sale of this plushie onto another one (and remove this one)
+      const mergeBtn = el.querySelector("#p-merge");
+      if (mergeBtn) mergeBtn.addEventListener("click", () => {
+        const others = state.products.filter((x) => x.id !== p.id).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        if (!others.length) { toast("There's no other plushie to move it to yet.", "warn"); return; }
+        pickProduct(others, "", (id) => {
+          const K = productById(id); if (!K) return;
+          const lines = state.sales.filter((x) => x.productId === p.id);
+          const acts = el.querySelector("#p-merge-acts");
+          acts.innerHTML = `<div class="imp-box warn" style="margin:0">Move ${lines.length} sale${lines.length === 1 ? "" : "s"}${p.stock ? ` and ${p.stock} in stock` : ""} from <b>${esc(p.name)}</b> to <b>${esc(K.name)}</b>, then remove ${esc(p.name)}?
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn small" id="p-merge-go">Move to ${esc(K.name)}</button><button type="button" class="btn ghost small" id="p-merge-no">Cancel</button></div></div>`;
+          acts.querySelector("#p-merge-no").addEventListener("click", () => { acts.innerHTML = ""; acts.appendChild(mergeBtn); });
+          acts.querySelector("#p-merge-go").addEventListener("click", async (e) => {
+            e.target.disabled = true;
+            const D = productById(p.id) || p;
+            if (await mergeProducts(K, D, lines)) { dupMemo.key = ""; closeSheet(); toast(`Moved ${lines.length} sale${lines.length === 1 ? "" : "s"} to ${K.name}`, "ok"); }
+            else e.target.disabled = false;
+          });
+          acts.scrollIntoView({ block: "nearest" });
+        }, { title: `Move “${p.name}” to…`, noNew: true });
       });
       if (!isNew) armDelete(el.querySelector("#p-del"), "Delete", async () => {
         if (await api.deleteProduct(p.id)) { dropPhoto(p.photoId); closeSheet(); toast("Plushie deleted. Its past sales stay in your history.", "ok"); }
