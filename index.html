@@ -157,6 +157,18 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .imp-box label { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; }
 .imp-box input[type=checkbox] { width: auto; margin-top: 3px; }
 .imp-scroll { overflow-x: auto; }
+.dup-banner { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; background: var(--accent-soft); }
+.dup-pair { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+.dup-why { font-size: .8rem; color: var(--muted); margin-bottom: 8px; }
+.dup-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dup-opt { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 8px; border-radius: 10px; background: var(--bg); min-width: 0; }
+.dup-opt .who { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.dup-opt .title { font-weight: 700; overflow-wrap: anywhere; }
+.dup-opt .sub { font-size: .78rem; color: var(--muted); }
+.dup-opt .btn { width: 100%; }
+.dup-opt .btn.armed { background: var(--warn); border-color: var(--warn); color: #fff; }
+.dup-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+@media (max-width: 420px) { .dup-opts { grid-template-columns: 1fr; } }
 .yr-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .yr-table th { text-align: right; font-weight: 700; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; }
 .yr-table th:first-child, .yr-table td:first-child { text-align: left; }
@@ -1160,6 +1172,24 @@ import {
       if (!fs) { local.yarn = local.yarn.filter((x) => x.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("yarn", id)));
     },
+    // Several writes at once: [{ col, id, kind: "update" | "delete", data }]
+    async applyOps(ops) {
+      if (!fs) {
+        for (const o of ops) {
+          const arr = local[o.col], i = arr.findIndex((x) => x.id === o.id);
+          if (i < 0) continue;
+          if (o.kind === "delete") arr.splice(i, 1); else Object.assign(arr[i], o.data);
+        }
+        syncLocal(); return true;
+      }
+      let ok = true;
+      for (let i = 0; i < ops.length; i += 450) {
+        const b = writeBatch(fs);
+        for (const o of ops.slice(i, i + 450)) { if (o.kind === "delete") b.delete(ref(o.col, o.id)); else b.update(ref(o.col, o.id), o.data); }
+        ok = write(() => b.commit()) && ok;
+      }
+      return ok;
+    },
     // Fix many sales at once (and maybe add an event first)
     async fixSales(patches, events = []) {
       if (!fs) { local.events.push(...events); for (const [id, d] of patches) { const x = local.sales.find((s) => s.id === id); if (x) Object.assign(x, d); } syncLocal(); return true; }
@@ -1475,6 +1505,155 @@ import {
     }
     return m;
   }
+  // ---------- Similar plushie names ----------
+  // Her handwritten records spell the same plushie different ways ("Possum" / "Opossum", "mini turtle" / "Small Turtle",
+  // "Lt Blue Oct" / "Light Blue Octo"). nameWords() boils a name down so those compare equal.
+  const NAME_SWAPS = [[/\bo?possums?\b/g, "opossum"], [/\boct(o|os|opus|opuses|opi|opie|opies|ie|ies)?\b/g, "octo"], [/\b(mini|little|tiny|sm)\b/g, "small"],
+    [/\b(large|lg|giant)\b/g, "big"], [/\blt\b/g, "light"], [/\bdk\b/g, "dark"], [/\bgrey\b/g, "gray"], [/\bkitty\b/g, "cat"], [/\bkey chains?\b/g, "keychain"],
+    [/\bkeychains\b/g, "keychain"], [/\bpurp\b/g, "purple"], [/\bgeese\b/g, "goose"], [/\bmice\b/g, "mouse"], [/\bwht\b/g, "white"], [/\bblk\b/g, "black"], [/\bgrayish\b/g, "gray"]];
+  const NAME_SKIP = new Set(["the", "a", "an", "and", "with", "w", "plushie", "plush"]);
+  function nameWords(n) {
+    let s = " " + String(n || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ") + " ";
+    for (const [re, to] of NAME_SWAPS) s = s.replace(re, to);
+    return [...new Set(s.split(" ").filter((w) => w && !NAME_SKIP.has(w)).map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)))].sort();
+  }
+  function editDistance(a, b) {
+    if (Math.abs(a.length - b.length) > 2) return 3;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // Why two plushies look like the same one (strong reasons first), or "" if they don't.
+  // Only spelling differences count, plus a size word ("small Bee") when the prices match, so real
+  // variations (Cat vs Calico Cat, Opossum vs Big Opossum) don't keep coming up.
+  const COLOR_WORDS = new Set(["red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "black", "gray", "brown", "teal", "tan", "lime", "peach", "light", "dark"]);
+  const SIZE_WORDS = new Set(["small", "big", "medium"]);
+  function sameWhy(a, b) {
+    const wa = nameWords(a.name), wb = nameWords(b.name), ja = wa.join(" "), jb = wb.join(" ");
+    if (!ja || !jb) return "";
+    if (ja === jb) return "same|Same plushie, written a different way";
+    if (wa.length === wb.length) {
+      const da = wa.filter((w) => !wb.includes(w)), db = wb.filter((w) => !wa.includes(w));
+      if (da.length === 1 && db.length === 1 && !(COLOR_WORDS.has(da[0]) && COLOR_WORDS.has(db[0])) && !(SIZE_WORDS.has(da[0]) || SIZE_WORDS.has(db[0]))) {
+        const x = da[0], y = db[0], n = Math.min(x.length, y.length);
+        if (n >= 4 && editDistance(x, y) <= (n >= 7 ? 2 : 1)) return "same|Spelled almost the same";
+      }
+    }
+    const [small, big] = wa.length < wb.length ? [wa, wb] : [wb, wa];
+    const extra = big.filter((w) => !small.includes(w));
+    if (small.length && big.length - small.length === 1 && extra.length === 1 && SIZE_WORDS.has(extra[0])) {
+      const pa = +a.price || 0, pb = +b.price || 0;
+      if (pa && pb && Math.abs(pa - pb) <= 0.25 * Math.max(pa, pb)) return `maybe|One name just adds “${extra[0]}”, and they cost about the same`;
+    }
+    return "";
+  }
+  let dupMemo = { key: "", list: [] };
+  // Pairs of plushies (plus sale names with no plushie) that may be the same, skipping pairs she said are different
+  function similarPairs() {
+    const notSame = new Set(Array.isArray(state.settings.notSame) ? state.settings.notSame : []);
+    const linked = new Set(state.products.map((p) => (p.name || "").trim().toLowerCase()));
+    const loose = new Map();
+    for (const x of state.sales) if (!x.productId || !productById(x.productId)) {
+      const n = (x.productName || "").trim(); if (n && !linked.has(n.toLowerCase())) loose.set(n.toLowerCase(), n);
+    }
+    const key = state.products.map((p) => p.id + ":" + p.name + ":" + p.price).join("|") + "#" + [...loose.keys()].join("|") + "#" + [...notSame].join("|");
+    if (key === dupMemo.key) return dupMemo.list;
+    // Price for a name that's only on sales: what it usually sold for
+    const loosePrice = (n) => { const l = state.sales.filter((x) => (x.productName || "").trim().toLowerCase() === n.toLowerCase() && x.qty); return l.length ? l.reduce((t, x) => t + x.total / x.qty, 0) / l.length : 0; };
+    const items = [...state.products.filter((p) => !p.example).map((p) => ({ id: p.id, name: p.name || "", price: +p.price || 0 })), ...[...loose.values()].map((n) => ({ id: "", name: n, price: loosePrice(n) }))];
+    const list = [];
+    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+      const a = items[i], b = items[j];
+      if (!a.id && !b.id) continue;
+      const pk = [a.id || "n:" + a.name.toLowerCase(), b.id || "n:" + b.name.toLowerCase()].sort().join("|");
+      if (notSame.has(pk)) continue;
+      const why = sameWhy(a, b);
+      if (why) { const [level, text] = why.split("|"); list.push({ a, b, pk, level, text }); }
+    }
+    list.sort((x, y) => (x.level === y.level ? x.a.name.localeCompare(y.a.name) : x.level === "same" ? -1 : 1));
+    dupMemo = { key, list };
+    return list;
+  }
+  function dupBannerHTML() {
+    if (state.readOnly) return "";
+    const n = similarPairs().length;
+    return n ? `<section class="panel dup-banner"><div><b>🔎 ${n} pair${n === 1 ? "" : "s"} of plushies might be the same</b><div class="sub" style="font-size:.82rem;color:var(--muted)">Names written differently in old notes, like Possum and Opossum</div></div>
+      <button class="btn small" type="button" data-act="dups">Review</button></section>` : "";
+  }
+  function dupSheet() {
+    const gone = new Set();
+    openSheet(`<h3>Plushies that might be the same</h3>
+      <p class="hint">If two are really the same plushie, tap the name to keep. All their sales and stock move onto it and the other one is removed. If they're different, tap “They're different” and it won't ask again.</p>
+      <div id="dup-list"></div>
+      <div class="actions"><div class="right"><button class="btn" type="button" id="dup-done">Done</button></div></div>`, (el) => {
+      const box = el.querySelector("#dup-list");
+      const info = (it) => {
+        const p = it.id ? productById(it.id) : null;
+        const lines = state.sales.filter((x) => (it.id ? x.productId === it.id : !x.productId && (x.productName || "").trim().toLowerCase() === it.name.toLowerCase()));
+        const units = lines.reduce((n, x) => n + (x.qty || 0), 0);
+        return { p, lines, units, html: `<div class="who">${avatar(p && p.photo, (p && p.color) || YARN[6])}<div style="min-width:0"><div class="title">${esc(it.name)}</div>
+          <div class="sub num">${p ? `${p.price ? fmt(p.price) : "No price"} · ` : "Only on sales · "}${units} sold${p ? ` · ${p.stock || 0} in stock` : ""}</div></div></div>` };
+      };
+      const draw = () => {
+        const list = similarPairs().filter((d) => !gone.has(d.a.id || d.a.name) && !gone.has(d.b.id || d.b.name) && (!d.a.id || productById(d.a.id)) && (!d.b.id || productById(d.b.id)));
+        if (!list.length) { box.innerHTML = `<div class="empty">Nothing left to check. 🎉</div>`; return; }
+        box.innerHTML = list.map((d, i) => {
+          const A = info(d.a), B = info(d.b);
+          const opt = (it, X, side) => `<div class="dup-opt">${X.html}${it.id ? `<button type="button" class="btn small${d.level === "same" ? "" : " ghost"}" data-keep="${side}" data-i="${i}">Keep “${esc(it.name)}”</button>` : `<span class="sub">Name from old sales</span>`}</div>`;
+          return `<div class="dup-pair" data-i="${i}"><div class="dup-why">${d.level === "same" ? "<b>Probably the same.</b> " : "<b>Maybe the same.</b> "}${esc(d.text)}</div>
+            <div class="dup-opts">${opt(d.a, A, "a")}${opt(d.b, B, "b")}</div>
+            <div class="dup-foot"><button type="button" class="linkbtn" data-diff="${i}">They're different</button></div></div>`;
+        }).join("");
+        box._list = list;
+      };
+      draw();
+      box.addEventListener("click", async (e) => {
+        const list = box._list || [];
+        const diff = e.target.closest("[data-diff]");
+        if (diff) {
+          const d = list[+diff.dataset.diff]; diff.disabled = true;
+          const cur = Array.isArray(state.settings.notSame) ? state.settings.notSame : [];
+          if (await api.saveSettings({ notSame: [...cur, d.pk] })) { state.settings.notSame = [...cur, d.pk]; dupMemo.key = ""; draw(); }
+          else diff.disabled = false;
+          return;
+        }
+        const kb = e.target.closest("[data-keep]"); if (!kb) return;
+        if (!kb.classList.contains("armed")) {
+          box.querySelectorAll(".armed").forEach((b) => { b.classList.remove("armed"); b.textContent = b.dataset.label; });
+          kb.dataset.label = kb.textContent; kb.classList.add("armed"); kb.textContent = "Tap again to merge";
+          setTimeout(() => { if (kb.isConnected && kb.classList.contains("armed")) { kb.classList.remove("armed"); kb.textContent = kb.dataset.label; } }, 4000);
+          return;
+        }
+        const d = list[+kb.dataset.i], keepIt = kb.dataset.keep === "a" ? d.a : d.b, dropIt = kb.dataset.keep === "a" ? d.b : d.a;
+        const K = productById(keepIt.id); if (!K) return;
+        const D = dropIt.id ? productById(dropIt.id) : null, lines = info(dropIt).lines;
+        kb.disabled = true;
+        const ops = lines.map((x) => ({ col: "sales", id: x.id, kind: "update", data: { productId: K.id, productName: K.name, color: K.color || "" } }));
+        let photoMoved = false;
+        if (D) {
+          const kd = { stock: (K.stock || 0) + (D.stock || 0) };
+          if (!K.photoId && !K._inlinePhoto && D.photoId) { kd.photoId = D.photoId; photoMoved = true; }
+          if (!(+K.price) && +D.price) kd.price = D.price;
+          if (!(+K.cost) && +D.cost) kd.cost = D.cost;
+          if (!K.barcode && D.barcode) kd.barcode = D.barcode;
+          const ky = Array.isArray(K.yarns) ? K.yarns : [], dy = Array.isArray(D.yarns) ? D.yarns : [];
+          if (dy.some((u) => !ky.some((v) => v.yarnId === u.yarnId))) kd.yarns = [...ky, ...dy.filter((u) => !ky.some((v) => v.yarnId === u.yarnId))];
+          ops.push({ col: "products", id: K.id, kind: "update", data: kd }, { col: "products", id: D.id, kind: "delete" });
+        }
+        if (await api.applyOps(ops)) {
+          if (D && D.photoId && !photoMoved) dropPhoto(D.photoId);
+          gone.add(dropIt.id || dropIt.name); dupMemo.key = "";
+          toast(`Merged into ${K.name}${lines.length ? ` · ${lines.length} sale${lines.length === 1 ? "" : "s"} moved` : ""}`, "ok");
+          draw();
+        } else kb.disabled = false;
+      });
+      el.querySelector("#dup-done").addEventListener("click", closeSheet);
+    }, { big: true });
+  }
   const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example) || state.events.some((x) => x.example);
 
   // ---------- Render ----------
@@ -1691,7 +1870,7 @@ import {
       : !found.length ? "No plushies match that search." : inv.filter === "price" ? "All prices look right." : `No plushies are ${INV_FILTERS[inv.filter][0].toLowerCase()} right now.`}</div></section>`;
     if (inv.view === "list") {
       const shown = list.reduce((n, p) => n + (p.stock || 0), 0);
-      return `
+      return `${dupBannerHTML()}
       <section class="panel">
         <div class="toolbar">
           <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
@@ -1715,7 +1894,7 @@ import {
     }
     const stockTotal = state.products.reduce((n, p) => n + (p.stock || 0), 0);
     const stockValue = state.products.reduce((n, p) => n + (p.stock || 0) * (p.price || 0), 0);
-    return `
+    return `${dupBannerHTML()}
       <section class="panel">
         <div class="toolbar">
           <input class="search" id="q" type="search" placeholder="Search plushies" value="${esc(state.search)}" aria-label="Search plushies">
@@ -3216,6 +3395,7 @@ import {
     if (yq) { const y = yarnById(yq.dataset.yarnQty); if (y) api.patchYarn(y.id, { qty: Math.max(0, (+y.qty || 0) + Number(yq.dataset.d)) }); return; }
     const zy = t.closest("[data-zoom-yarn]"); if (zy) { const y = yarnById(zy.dataset.zoomYarn); if (y && y.photo) showPhoto({ name: yarnTitle(y), photo: y.photo, price: +y.cost || 0 }); return; }
     if (t.closest("[data-act='print-tags']")) return tagSheet();
+    if (t.closest("[data-act='dups']")) return dupSheet();
     const ta = t.closest("[data-tag-add]");
     if (ta) {
       const p = productById(ta.dataset.tagAdd); if (!p) return;
