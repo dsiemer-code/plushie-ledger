@@ -149,6 +149,10 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .imp-box { border-radius: 10px; padding: 10px 12px; font-size: .85rem; margin-bottom: 10px; }
 .imp-box.warn { background: var(--warn-soft); }
 .imp-box.info { background: var(--accent-soft); }
+.stray-row { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.stray-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; align-items: center; }
+.stray-acts input { flex: 1 1 180px; min-width: 0; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card, #fff); color: inherit; }
+.chip.warn { background: var(--warn-soft); }
 .imp-box ul { margin: 6px 0 0; padding-left: 18px; }
 .imp-box label { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; }
 .imp-box input[type=checkbox] { width: auto; margin-top: 3px; }
@@ -1148,6 +1152,14 @@ import {
       if (!fs) { local.yarn = local.yarn.filter((x) => x.id !== id); syncLocal(); return true; }
       return write(() => deleteDoc(ref("yarn", id)));
     },
+    // Fix many sales at once (and maybe add an event first)
+    async fixSales(patches, events = []) {
+      if (!fs) { local.events.push(...events); for (const [id, d] of patches) { const x = local.sales.find((s) => s.id === id); if (x) Object.assign(x, d); } syncLocal(); return true; }
+      const ops = [...events.map(({ id, ...data }) => (b) => b.set(ref("events", id), data)), ...patches.map(([id, d]) => (b) => b.update(ref("sales", id), d))];
+      let ok = true;
+      for (let i = 0; i < ops.length; i += 450) { const b = writeBatch(fs); ops.slice(i, i + 450).forEach((f) => f(b)); ok = write(() => b.commit()) && ok; }
+      return ok;
+    },
     // Many records at once, in batches (Firestore allows 500 writes per batch)
     async importAll(products, sales, events = []) {
       if (!fs) { local.products.push(...products); local.sales.push(...sales); local.events.push(...events); syncLocal(); return true; }
@@ -1362,6 +1374,21 @@ import {
   function eventById(id) { return id ? state.events.find((x) => x.id === id) : undefined; }
   const evEnd = (ev) => (ev.end && ev.end >= ev.start ? ev.end : ev.start);
   const evStatus = (ev, today = todayStr()) => (ev.start > today ? "upcoming" : evEnd(ev) < today ? "past" : "now");
+  // Day arithmetic on "YYYY-MM-DD" strings
+  function addDays(dateStr, n) { const [y, m, d] = dateStr.split("-").map(Number); const t = new Date(y, m - 1, d + n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; }
+  // A sale belongs to a show if it's dated during it, give or take a few days (sales typed in the next day)
+  const nearEvent = (ev, date) => date >= addDays(ev.start, -3) && date <= addDays(evEnd(ev), 3);
+  // The event with this name that a sale on this date belongs to (same name, different year = different show)
+  function eventForSale(name, date, list = state.events) {
+    const n = (name || "").trim().toLowerCase();
+    return n ? list.find((x) => (x.name || "").trim().toLowerCase() === n && nearEvent(x, date)) : undefined;
+  }
+  // Sales tied to this event but dated well outside it (e.g. last year's show with the same name), grouped by date
+  function straySales(ev) {
+    const m = new Map();
+    for (const s of state.sales) if (s.eventId === ev.id && s.date && !nearEvent(ev, s.date)) { if (!m.has(s.date)) m.set(s.date, []); m.get(s.date).push(s); }
+    return [...m].sort((a, b) => a[0].localeCompare(b[0]));
+  }
   function evDates(ev) {
     const yr = ev.start.slice(0, 4) !== todayStr().slice(0, 4) ? ", " + ev.start.slice(0, 4) : "";
     return dayLabel(ev.start) + (evEnd(ev) !== ev.start ? " – " + dayLabel(evEnd(ev)) : "") + yr;
@@ -1884,7 +1911,7 @@ import {
           <button class="linkbtn" data-edit-event="${esc(ev.id)}" aria-label="Edit ${esc(ev.name)}">Edit</button>
         </div>
         <div class="bottom">
-          <div class="num">${ev.example ? '<span class="chip ex">Example</span> ' : ""}${st === "now" ? '<span class="chip">Today</span> ' : ""}
+          <div class="num">${ev.example ? '<span class="chip ex">Example</span> ' : ""}${st === "now" ? '<span class="chip">Today</span> ' : ""}${(() => { const n = straySales(ev).reduce((a, [, l]) => a + l.length, 0); return n ? `<button type="button" class="chip warn" data-edit-event="${esc(ev.id)}">${n} sale${n === 1 ? "" : "s"} from other dates · fix</button> ` : ""; })()}
             ${t.orders ? `<b>${fmt(t.revenue)}</b> <span class="label">${t.units} sold</span><div class="sub" style="font-size:.78rem;color:var(--muted)">${fmt(t.profit)} after ${costWords(ev)}</div><div class="sub num" style="font-size:.78rem;color:var(--muted)">${payBreakdown(state.sales.filter((s) => s.eventId === ev.id))}</div>`
               : `<span class="label">${st === "upcoming" ? "Coming up" : "No sales"}</span>`}
           </div>
@@ -2231,6 +2258,7 @@ import {
     const costs = (Array.isArray(ev.expenses) ? ev.expenses : []).map((x) => ({ what: x.what || "", amount: x.amount ?? "" }));
     openSheet(`
       <h3>${isNew ? "Add an event" : "Edit event"}</h3>
+      <div id="e-stray"></div>
       <form id="eform" class="fgrid" novalidate>
         <label class="f full">Event<input id="e-title" required value="${esc(ev.name)}" placeholder="e.g. Holiday Craft Fair" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words"></label>
         <label class="f">First day<input id="e-start" type="date" value="${esc(ev.start)}"></label>
@@ -2324,6 +2352,58 @@ import {
         }
       });
       if (addPhoto) { $("#e-photos-wrap").scrollIntoView({ block: "center" }); if (photos.length < EV_PHOTOS_MAX) fileIn.click(); }
+      // Sales from another show with the same name (another year): put them right in a tap
+      const strayBox = $("#e-stray"), done = new Set();
+      const yearIn = (name) => (String(name).match(/\b(19|20)\d{2}\b/) || [])[0];
+      const drawStray = () => {
+        if (isNew) return;
+        const cur = eventById(ev.id) || ev;
+        const groups = straySales(cur).map(([d, l]) => [d, l.filter((x) => !done.has(x.id))]).filter(([, l]) => l.length);
+        if (!groups.length) { strayBox.innerHTML = ""; return; }
+        const n = groups.reduce((a, [, l]) => a + l.length, 0), y = cur.start.slice(0, 4), ny = yearIn(cur.name);
+        strayBox.innerHTML = `<div class="imp-box warn"><b>${n} sale${n === 1 ? " here isn't" : "s here aren't"} from this show's dates (${esc(evDates(cur))}).</b>
+          They may be from another year's show with the same name.
+          ${ny && ny !== y ? `<div style="margin-top:6px">This show is dated ${y} but its name says ${ny}. You can fix the name below.</div>` : ""}
+          ${groups.map(([d, l]) => {
+            const fix = y + d.slice(4), fixOk = d.slice(0, 4) !== y && fix >= cur.start && fix <= evEnd(cur);
+            return `<div class="stray-row" data-date="${d}"><div class="num">${l.length} sale${l.length === 1 ? "" : "s"} dated <b>${esc(dayLabel(d))}, ${d.slice(0, 4)}</b> · ${fmt(l.reduce((a, x) => a + (x.total || 0), 0))}</div>
+              <div class="stray-acts">${fixOk ? `<button type="button" class="btn small" data-stray-fix="${fix}">Change to ${esc(dayLabel(fix))}, ${y}</button>` : ""}<button type="button" class="btn ${fixOk ? "ghost " : ""}small" data-stray-move>Move to their own show</button></div></div>`;
+          }).join("")}</div>`;
+      };
+      drawStray();
+      strayBox.addEventListener("click", async (e) => {
+        const row = e.target.closest(".stray-row"); if (!row) return;
+        const cur = eventById(ev.id) || ev, d = row.dataset.date;
+        const list = (straySales(cur).find(([x]) => x === d) || [, []])[1].filter((x) => !done.has(x.id));
+        const fixB = e.target.closest("[data-stray-fix]");
+        if (fixB) {
+          fixB.disabled = true; const to = fixB.dataset.strayFix;
+          if (await api.fixSales(list.map((x) => [x.id, { date: to }]))) { list.forEach((x) => done.add(x.id)); drawStray(); toast(`Changed ${list.length} sale${list.length === 1 ? "" : "s"} to ${dayLabel(to)}, ${to.slice(0, 4)}`, "ok"); }
+          else fixB.disabled = false;
+          return;
+        }
+        if (e.target.closest("[data-stray-move]")) {
+          const yr = d.slice(0, 4), base = cur.name || "Show";
+          const guess = yearIn(base) ? base.replace(/\b(19|20)\d{2}\b/, yr) : `${base} ${yr}`;
+          row.querySelector(".stray-acts").innerHTML = `<input class="stray-name" value="${esc(guess)}" aria-label="Name of the show these sales go to" autocomplete="off" autocorrect="on" spellcheck="true" autocapitalize="words">
+            <button type="button" class="btn small" data-stray-go>Move ${list.length}</button><button type="button" class="btn ghost small" data-stray-cancel>Cancel</button>`;
+          row.querySelector(".stray-name").focus();
+          return;
+        }
+        if (e.target.closest("[data-stray-cancel]")) return drawStray();
+        const go = e.target.closest("[data-stray-go]");
+        if (go) {
+          const name = row.querySelector(".stray-name").value.trim();
+          if (!name) { row.querySelector(".stray-name").focus(); toast("Give the show a name.", "warn"); return; }
+          go.disabled = true;
+          let target = eventForSale(name, d, state.events.filter((x) => x.id !== cur.id)), events = [];
+          if (!target) { target = { id: uid(), name, start: d, end: d, location: cur.location || "", fee: 0, notes: "", createdAt: Date.now() }; events = [target]; }
+          if (await api.fixSales(list.map((x) => [x.id, { eventId: target.id, eventName: target.name }]), events)) {
+            list.forEach((x) => done.add(x.id)); drawStray();
+            toast(`Moved ${list.length} sale${list.length === 1 ? "" : "s"} to ${target.name}`, "ok");
+          } else go.disabled = false;
+        }
+      });
       $("#e-cancel").addEventListener("click", closeSheet);
       $("#eform").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -2950,7 +3030,6 @@ import {
       const k = keyOf(s.date, p ? p.name : s.productName || "", s.qty, s.total);
       existing.set(k, (existing.get(k) || 0) + 1);
     }
-    const evByName = new Map(state.events.map((x) => [(x.name || "").trim().toLowerCase(), x]));
     const ok = [], issues = [], newNames = new Map(), newEvents = new Map();
     let dups = 0;
     rows.slice(headIdx + 1).forEach((r, i) => {
@@ -2975,15 +3054,21 @@ import {
       if (existing.get(k) > 0) { existing.set(k, existing.get(k) - 1); dups++; return; }
       const lower = name.toLowerCase();
       if (!byName.has(lower) && !newNames.has(lower)) newNames.set(lower, { name, price });
-      const evLower = event.toLowerCase();
-      if (event && !evByName.has(evLower)) {
-        // New event spans the dates of its sales in the file
-        const ne = newEvents.get(evLower) || { name: event, start: date, end: date };
-        if (date < ne.start) ne.start = date;
-        if (date > ne.end) ne.end = date;
-        newEvents.set(evLower, ne);
+      // An existing event only counts if the sale is dated during it: "Craft Show" in 2024 and in 2025 are two shows
+      let evKey = "";
+      if (event) {
+        const found = eventForSale(event, date);
+        if (found) evKey = "id:" + found.id;
+        else {
+          // New event spans the dates of its sales in the file (one per name per year)
+          evKey = event.toLowerCase() + "|" + date.slice(0, 4);
+          const ne = newEvents.get(evKey) || { key: evKey, name: event, start: date, end: date };
+          if (date < ne.start) ne.start = date;
+          if (date > ne.end) ne.end = date;
+          newEvents.set(evKey, ne);
+        }
       }
-      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, event, note: get(r, "note"),
+      ok.push({ date, name, qty: q, unitPrice: price, total, unitCost: Number.isFinite(cost) ? round2(cost) : null, channel, event, evKey, note: get(r, "note"),
         payment: (() => { const v = get(r, "payment"); return payMethods().find((m) => m.toLowerCase() === v.toLowerCase()) || v; })() });
     });
     ok.sort((a, b) => a.date.localeCompare(b.date));
@@ -3035,7 +3120,7 @@ import {
       ${newNames.length && ok.length ? `<div class="imp-box info"><label><input type="checkbox" id="i-addnew" checked>
         <span>Also add ${newNames.length} plushie${newNames.length === 1 ? "" : "s"} to Products (with 0 in stock): ${newNames.slice(0, 6).map((n) => esc(n.name)).join(", ")}${newNames.length > 6 ? `, and ${newNames.length - 6} more` : ""}</span></label></div>` : ""}
       ${newEvents.length && ok.length ? `<div class="imp-box info"><label><input type="checkbox" id="i-addev" checked>
-        <span>Also add ${newEvents.length} event${newEvents.length === 1 ? "" : "s"} to Events: ${newEvents.slice(0, 6).map((n) => esc(n.name)).join(", ")}${newEvents.length > 6 ? `, and ${newEvents.length - 6} more` : ""}</span></label></div>` : ""}
+        <span>Also add ${newEvents.length} event${newEvents.length === 1 ? "" : "s"} to Events: ${newEvents.slice(0, 6).map((n) => `${esc(n.name)} (${esc(evDates(n))})`).join(", ")}${newEvents.length > 6 ? `, and ${newEvents.length - 6} more` : ""}</span></label></div>` : ""}
       ${ok.length ? `<div class="imp-scroll"><table class="imp-table num">
         <thead><tr><th>Date</th><th>Plushie</th><th class="r">Qty</th><th class="r">Total</th><th>Where</th></tr></thead>
         <tbody>${shown.map((s) => `<tr><td>${esc(s.date)}</td><td>${esc(s.name)}</td><td class="r">${s.qty}</td><td class="r">${fmt(s.total)}</td><td>${esc(s.event || s.channel)}</td></tr>`).join("")}</tbody>
@@ -3058,14 +3143,14 @@ import {
           const p = { id: uid(), name: n.name, price: n.price, cost: 0, stock: 0, hours: 0, notes: "Added by import", color: YARN[i % 8], createdAt: now };
           products.push(p); byName.set(n.name.toLowerCase(), p);
         });
-        const evByName = new Map(state.events.map((x) => [(x.name || "").trim().toLowerCase(), x]));
+        const evByKey = new Map(state.events.map((x) => ["id:" + x.id, x]));
         const events = [];
         if (el.querySelector("#i-addev") && el.querySelector("#i-addev").checked) newEvents.forEach((n) => {
           const ev = { id: uid(), name: n.name, start: n.start, end: n.end, location: "", fee: 0, notes: "Added by import", createdAt: now };
-          events.push(ev); evByName.set(n.name.toLowerCase(), ev);
+          events.push(ev); evByKey.set(n.key, ev);
         });
         const sales = ok.map((s, i) => {
-          const p = byName.get(s.name.toLowerCase()), ev = s.event ? evByName.get(s.event.toLowerCase()) : null;
+          const p = byName.get(s.name.toLowerCase()), ev = s.evKey ? evByKey.get(s.evKey) : null;
           return {
             id: uid(), productId: p ? p.id : "", productName: p ? p.name : s.name, color: p ? p.color || "" : "",
             qty: s.qty, unitPrice: s.unitPrice, total: s.total, unitCost: s.unitCost ?? (p ? p.cost || 0 : 0),
