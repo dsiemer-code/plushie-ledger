@@ -157,6 +157,14 @@ main { padding-block: 18px 110px; display: grid; gap: 16px; }
 .imp-box label { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; }
 .imp-box input[type=checkbox] { width: auto; margin-top: 3px; }
 .imp-scroll { overflow-x: auto; }
+.yr-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.yr-table th { text-align: right; font-weight: 700; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; }
+.yr-table th:first-child, .yr-table td:first-child { text-align: left; }
+.yr-table td { text-align: right; padding: 8px 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+.yr-table td .sub { display: block; font-size: .74rem; color: var(--muted); font-weight: 400; }
+.yr-table tr.all td { border-top: 2px solid var(--ink, currentColor); font-weight: 700; }
+.yr-table .neg { color: var(--warn); }
+@media (max-width: 420px) { .yr-table { font-size: .82rem; } .yr-table td, .yr-table th { padding-left: 3px; padding-right: 3px; } }
 .imp-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 .imp-table th { text-align: left; font-weight: 700; color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; }
 .imp-table td { padding: 6px; border-top: 1px solid var(--line); white-space: nowrap; }
@@ -1518,6 +1526,22 @@ import {
         </div>
       </section>`;
 
+    // Every year she's sold in, newest first, with an all-time line at the bottom
+    const years = [...new Set([...state.sales.map((x) => (x.date || "").slice(0, 4)), ...state.events.filter((ev) => ev.start <= todayStr()).map((ev) => ev.start.slice(0, 4))])]
+      .filter((x) => /^\d{4}$/.test(x)).sort().reverse().map((yr) => ({ yr, t: yearTotals(yr) })).filter((x) => x.t.units || x.t.revenue || x.t.shows);
+    const all = years.reduce((a, { t }) => ({ revenue: a.revenue + t.revenue, units: a.units + t.units, profit: a.profit + t.profit, shows: a.shows + t.shows }), { revenue: 0, units: 0, profit: 0, shows: 0 });
+    const money = (n) => { n = round2(n); return `<span class="${n < 0 ? "neg" : ""}">${Number.isInteger(n) ? money0.format(n) : fmt(n)}</span>`; };
+    const yearsHTML = years.length ? `
+      <section class="panel">
+        <div class="month-head"><h2>Totals by year</h2></div>
+        <table class="yr-table num">
+          <thead><tr><th>Year</th><th>Sold</th><th>Sales</th><th>After costs</th></tr></thead>
+          <tbody>${years.map(({ yr, t }) => `<tr><td><b>${yr}</b><span class="sub">${t.shows} show${t.shows === 1 ? "" : "s"}</span></td><td>${t.units}</td><td>${money(t.revenue)}</td><td>${money(t.profit)}</td></tr>`).join("")}
+          ${years.length > 1 ? `<tr class="all"><td>All time<span class="sub">${all.shows} show${all.shows === 1 ? "" : "s"}</span></td><td>${all.units}</td><td>${money(all.revenue)}</td><td>${money(all.profit)}</td></tr>` : ""}</tbody>
+        </table>
+        <div style="margin-top:8px;font-size:.78rem;color:var(--muted)">After costs takes off yarn, booth fees and other show costs.</div>
+      </section>` : "";
+
     // Recent shows side by side
     const shows = state.events.filter((ev) => evStatus(ev) !== "upcoming")
       .map((ev) => ({ ev, t: eventTotals(ev) })).filter((x) => x.t.orders)
@@ -1614,7 +1638,7 @@ import {
             <div class="pc-acts">${iss.none ? "" : `<button class="linkbtn" data-price-ok="${esc(id)}">It's right</button>`}<button class="btn small" data-edit="${esc(id)}">${iss.none ? "Add price" : "Fix"}</button></div>
           </div>`; }).join("")}</div>
       </section>` : "";
-    return priceHTML + nowPanels + nextHTML + stats + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+    return priceHTML + nowPanels + nextHTML + stats + yearsHTML + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
   // One row per sale; a sale with several plushies lists them together
