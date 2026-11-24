@@ -426,6 +426,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .picker-list { flex: 1; overflow: auto; padding: 0 8px 12px; }
 .pick-row { display: flex; width: 100%; align-items: center; gap: 12px; padding: 8px; min-height: 64px; border: 0; border-radius: 12px; background: none; text-align: left; }
 .pick-row:hover, .pick-row[aria-selected="true"] { background: var(--bg); }
+.pick-row.out .nm, .pick-row.out .thumb, .pick-row.out .swatch { opacity: .6; }
 .pick-row .thumb { width: 48px; height: 48px; border-radius: 10px; }
 .pick-row .swatch { width: 40px; height: 40px; margin: 4px; }
 .pick-row .nm { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
@@ -2270,8 +2271,15 @@ import {
     </div>`;
     document.getElementById("sheet-root").appendChild(ov);
     const list = ov.querySelector(".picker-list"), q = ov.querySelector("input");
-    const row = (p) => `<button type="button" class="pick-row" data-id="${esc(p.id)}" aria-selected="${p.id === currentId}">${avatar(p.photo, p.color)}
-      <span class="nm">${esc(p.name)}<span class="meta">${filter ? `${(sold.get(p.id) || { units: 0 }).units} sold · ` : ""}${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${p.stock || 0} left</span></span></button>`;
+    const row = (p) => `<button type="button" class="pick-row${!filter && (p.stock || 0) <= 0 ? " out" : ""}" data-id="${esc(p.id)}" aria-selected="${p.id === currentId}">${avatar(p.photo, p.color)}
+      <span class="nm">${esc(p.name)}<span class="meta">${filter ? `${(sold.get(p.id) || { units: 0 }).units} sold · ` : ""}${p.price || p.price === 0 ? `${fmt(p.price)} · ` : ""}${(p.stock || 0) > 0 || filter ? `${p.stock || 0} left` : "Sold out"}</span></span></button>`;
+    // Selling: what she has on the table comes first, sold-out designs after
+    const rows = (hits) => {
+      if (filter) return hits.map(row).join("");
+      const have = hits.filter((p) => (p.stock || 0) > 0), out = hits.filter((p) => (p.stock || 0) <= 0);
+      if (!have.length || !out.length) return hits.map(row).join("");
+      return `<h4 class="pick-group">In stock · ${have.length}</h4>` + have.map(row).join("") + `<h4 class="pick-group">Sold out · ${out.length}</h4>` + out.map(row).join("");
+    };
     const allRow = () => `<button type="button" class="pick-row pick-new" data-id="" aria-selected="${!currentId}"><span class="pick-plus" aria-hidden="true">★</span>
       <span class="nm">All plushies<span class="meta">Show every sale</span></span></button>`;
     // Something she made at the booth: sell it straight away; saving the sale adds it to Products
@@ -2282,7 +2290,7 @@ import {
       const hits = t ? products.filter((p) => (p.name || "").toLowerCase().includes(t)) : products;
       const exact = hits.some((p) => (p.name || "").trim().toLowerCase() === t);
       list.innerHTML = (filter ? (typed ? "" : allRow()) : exact ? "" : newRow(typed))
-        + hits.map(row).join("")
+        + rows(hits)
         + (hits.length ? "" : `<p class="pick-none">No plushie matches “${esc(typed)}”.</p>`);
     };
     draw();
