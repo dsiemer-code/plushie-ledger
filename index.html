@@ -693,9 +693,10 @@ import {
   }
   // Shows the photo with a box she can drag and resize, and a button to take the background out.
   // Resolves with the finished photo, or "" if she cancels.
-  function cropPhoto(src, title = "Crop the photo") {
+  function cropPhoto(src, title = "Crop the photo", { repick = false } = {}) {
     return new Promise((resolve) => {
-      const full = { x: 0, y: 0, w: 1, h: 1 }, MIN = 0.08, original = src;
+      const full = { x: 0, y: 0, w: 1, h: 1 }, MIN = 0.08;
+      let original = src;
       let r = { ...full }, drag = null, working = false;
       const root = document.createElement("div");
       root.className = "cropper"; root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", title);
@@ -703,6 +704,7 @@ import {
         <div class="crop-head"><button type="button" class="btn ghost small" data-c="cancel">Cancel</button><span>${esc(title)}</span><button type="button" class="btn small" data-c="done">Use photo</button></div>
         <div class="crop-stage"><div class="crop-wrap"><img src="${esc(src)}" alt="" draggable="false"><div class="crop-box">${["nw", "ne", "sw", "se"].map((h) => `<i data-h="${h}"></i>`).join("")}</div></div></div>
         <div class="crop-foot"><p data-msg>Drag a corner to crop. Drag inside the box to move it.</p>
+          ${repick ? `<div><button type="button" class="btn small" data-c="repick">Choose a different photo</button><input type="file" accept="image/*" class="vh" data-repick tabindex="-1" aria-hidden="true"></div>` : ""}
           <div><button type="button" class="btn ghost small" data-c="bg">Remove background</button></div>
           <div><button type="button" class="btn ghost small" data-c="square">Square</button><button type="button" class="btn ghost small" data-c="whole">Whole photo</button></div></div>`;
       document.body.appendChild(root);
@@ -759,6 +761,8 @@ import {
         const b = e.target.closest("[data-c]"); if (!b || b.disabled) return;
         const c = b.dataset.c;
         if (c === "cancel") return finish("");
+        // Wrong photo: open the library again right from this tap (iOS only opens it from a tap) and swap it in
+        if (c === "repick") return root.querySelector("[data-repick]").click();
         if (c === "whole") { r = { ...full }; return draw(); }
         if (c === "square") {
           const W = img.naturalWidth || 1, H = img.naturalHeight || 1, side = Math.min(W, H);
@@ -771,11 +775,24 @@ import {
         busy(true); b.textContent = "Saving…";
         try { finish(await cutPhoto(src, r)); } catch (ex) { console.error(ex); toast("Couldn't crop that photo.", "err"); finish(""); }
       });
+      const repickIn = root.querySelector("[data-repick]");
+      if (repickIn) repickIn.addEventListener("change", async () => {
+        const f = repickIn.files && repickIn.files[0]; repickIn.value = "";
+        if (!f) return;
+        busy(true); msg.textContent = "Opening that photo…";
+        try {
+          const next = await openLarge(f);
+          if (!root.isConnected) return;
+          src = original = next; img.src = src; r = { ...full }; draw();
+          delete bgBtn.dataset.on; bgBtn.textContent = "Remove background"; msg.textContent = HINT;
+        } catch (ex) { console.error(ex); msg.textContent = HINT; toast("Couldn't open that photo. Try a JPG or PNG.", "warn"); }
+        busy(false);
+      });
       root.querySelector("[data-c=done]").focus();
     });
   }
   // A photo she just picked: open it, let her crop it, and return the finished photo ("" if she cancelled)
-  async function cropNewPhoto(file, title) { return cropPhoto(await openLarge(file), title); }
+  async function cropNewPhoto(file, title) { return cropPhoto(await openLarge(file), title, { repick: true }); }
 
   async function shrinkPhoto(file) {
     const url = URL.createObjectURL(file);
