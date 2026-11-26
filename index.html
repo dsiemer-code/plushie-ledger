@@ -308,6 +308,11 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 #scan-view { width: 100%; min-height: 220px; border-radius: 12px; overflow: hidden; background: #000; }
 #scan-view video { width: 100% !important; display: block; }
 .scan-msg { font-weight: 600; min-height: 1.4em; }
+.scan-ask { display: grid; gap: 10px; padding: 12px; border-radius: 14px; background: var(--accent-soft); }
+.scan-ask.bad { background: var(--warn-soft); }
+.scan-ask .t { font-weight: 700; font-size: 1.05rem; }
+.scan-ask .b { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scan-ask .b .btn { padding-block: 12px; font-size: 1rem; }
 .scan-type { display: flex; gap: 8px; }
 
 /* Tag printing: pages are built in #print-root and only they print */
@@ -1059,18 +1064,22 @@ import {
 
   // Camera scanner over the current screen. onCode(code) returns a message to show.
   // Hardware (Bluetooth) scanners type the code, so the box also takes typed codes.
-  function openScanner(title, onCode, { once = false } = {}) {
+  // ask: after each scan, pause and offer "Scan another" or "Done" (onCode may return { msg, ok }).
+  function openScanner(title, onCode, { once = false, ask = false } = {}) {
     const root = document.createElement("div");
     root.className = "scanner";
     root.innerHTML = `<div class="scan-box" role="dialog" aria-modal="true" aria-label="${esc(title)}">
       <div class="scan-head"><b>${esc(title)}</b><button class="btn small" type="button" id="scan-done">Done</button></div>
       <div id="scan-view"></div>
       <div class="scan-msg" id="scan-msg" role="status">Starting the camera…</div>
+      <div class="scan-ask" id="scan-ask" hidden><div class="t" id="scan-ask-t" role="status"></div>
+        <div class="b"><button class="btn" type="button" id="scan-again">Scan another</button><button class="btn ghost" type="button" id="scan-fin">Done</button></div></div>
       <form class="scan-type" id="scan-type"><input id="scan-code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Or type the code" aria-label="Barcode"><button class="btn ghost small">Add</button></form>
     </div>`;
     document.body.appendChild(root);
     const msg = (t) => { root.querySelector("#scan-msg").textContent = t; };
-    let scanner = null, closed = false, lastCode = "", lastAt = 0;
+    let scanner = null, closed = false, lastCode = "", lastAt = 0, asking = false;
+    const askBox = root.querySelector("#scan-ask"), msgEl = root.querySelector("#scan-msg");
     const close = async () => {
       if (closed) return; closed = true;
       try { if (scanner && scanner.isScanning) await scanner.stop(); if (scanner) scanner.clear(); } catch (e) {}
@@ -1078,12 +1087,27 @@ import {
     };
     const got = (raw) => {
       const code = String(raw || "").trim(), now = Date.now();
-      if (!code || closed) return;
+      if (!code || closed || asking) return;
       if (code === lastCode && now - lastAt < 2500) return; // the same tag still in view
       lastCode = code; lastAt = now;
-      const r = onCode(code); if (r) msg(r);
-      if (once) close();
+      const res = onCode(code), r = typeof res === "string" ? { msg: res, ok: true } : res || { msg: "", ok: true };
+      if (once) { if (r.msg) msg(r.msg); return close(); }
+      if (!ask) { if (r.msg) msg(r.msg); return; }
+      // Stop and ask what's next, so one tag isn't counted twice while she decides
+      asking = true;
+      try { if (scanner && scanner.isScanning) scanner.pause(true); } catch (e) {}
+      root.querySelector("#scan-ask-t").textContent = r.msg || "Scanned.";
+      askBox.classList.toggle("bad", r.ok === false);
+      root.querySelector("#scan-again").textContent = r.ok === false ? "Try again" : "Scan another";
+      askBox.hidden = false; msgEl.hidden = true;
+      root.querySelector("#scan-again").focus();
     };
+    root.querySelector("#scan-again").addEventListener("click", () => {
+      askBox.hidden = true; msgEl.hidden = false; msg("Point at the next tag.");
+      try { if (scanner) scanner.resume(); } catch (e) {}
+      lastCode = ""; asking = false;
+    });
+    root.querySelector("#scan-fin").addEventListener("click", close);
     root.querySelector("#scan-done").addEventListener("click", close);
     root.querySelector("#scan-type").addEventListener("submit", (e) => { e.preventDefault(); const i = root.querySelector("#scan-code"); lastCode = ""; got(i.value); i.value = ""; });
     (async () => {
@@ -1100,7 +1124,7 @@ import {
           { fps: 10, qrbox: (w, h) => ({ width: Math.max(60, Math.floor(w * 0.85)), height: Math.max(60, Math.floor(h * 0.4)) }) },
           got, () => {});
         if (closed) { try { await scanner.stop(); scanner.clear(); } catch (e) {} return; }
-        msg(once ? "Point the camera at the barcode." : "Point at a tag's barcode. Keep scanning, then tap Done.");
+        if (!asking) msg(once || ask ? "Point the camera at the barcode." : "Point at a tag's barcode. Keep scanning, then tap Done.");
       } catch (e) {
         console.error(e);
         msg(/script load/.test(String(e && e.message)) ? "Couldn't load the scanner. Check the internet connection, or type the code below."
@@ -2874,7 +2898,7 @@ import {
       // Each scan adds that plushie at its default price, or one more if it's already in the sale
       $("#s-scan").addEventListener("click", () => openScanner("Scan plushie tags", (code) => {
         const p = productByBarcode(code);
-        if (!p) return `No plushie has barcode ${code}. Add it to the plushie in Products.`;
+        if (!p) return { ok: false, msg: `No plushie has barcode ${code}. Add it to the plushie in Products.` };
         const price = p.price || p.price === 0 ? p.price : "";
         let ln = lines.find((l) => l.productId === p.id);
         if (ln) ln.qty++;
@@ -2886,8 +2910,8 @@ import {
         renderLines();
         if (navigator.vibrate) navigator.vibrate(60);
         const units = lines.reduce((n, l) => n + l.qty, 0);
-        return `Added ${p.name}${ln.qty > 1 ? ` (×${ln.qty})` : ""} · ${units} plushie${units === 1 ? "" : "s"}, ${fmt(lines.reduce((n, l) => n + lineTotal(l), 0))}`;
-      }));
+        return { ok: true, msg: `Added ${p.name}${ln.qty > 1 ? ` (×${ln.qty})` : ""} · ${units} plushie${units === 1 ? "" : "s"}, ${fmt(lines.reduce((n, l) => n + lineTotal(l), 0))}` };
+      }, { ask: true }));
       $("#s-addline").addEventListener("click", () => {
         lines.push(blankLine()); renderLines();
         box.querySelectorAll(".line")[lines.length - 1].scrollIntoView({ block: "nearest" });
