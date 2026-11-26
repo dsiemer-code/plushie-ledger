@@ -471,6 +471,7 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 
 .monthgroup h4 { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; padding-block: 4px 6px; }
 .monthgroup + .monthgroup { margin-top: 14px; }
+.show-more { width: 100%; margin-top: 10px; }
 /* Big screens: use the width. Sales in each month sit in two columns, the year panels side by side */
 .ov-cols { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; align-items: start; }
 .ov-col { display: grid; gap: 16px; min-width: 0; }
@@ -1725,6 +1726,7 @@ import {
   const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example) || state.events.some((x) => x.example);
 
   // ---------- Render ----------
+  let showAllShows = false; // Overview's Sales by show: just the latest, or every show
   const WIDE = matchMedia("(min-width: 1200px)");
   WIDE.addEventListener("change", () => { if (state.tab === "overview") render(); });
   function render() {
@@ -1792,10 +1794,13 @@ import {
       </section>` : "";
 
     // Recent shows side by side
-    const shows = state.events.filter((ev) => evStatus(ev) !== "upcoming")
+    // Every show with sales, newest first: the 6 latest, then "Show all" for the rest
+    const allShows = state.events.filter((ev) => evStatus(ev) !== "upcoming")
       .map((ev) => ({ ev, t: eventTotals(ev) })).filter((x) => x.t.orders)
-      .sort((a, b) => b.ev.start.localeCompare(a.ev.start)).slice(0, 6);
-    const max = Math.max(0, ...shows.map((x) => x.t.revenue));
+      .sort((a, b) => b.ev.start.localeCompare(a.ev.start));
+    const shows = showAllShows ? allShows : allShows.slice(0, 6);
+    const max = Math.max(0, ...allShows.map((x) => x.t.revenue));
+    const moreBtn = allShows.length > 6 ? `<button type="button" class="btn ghost small show-more" data-act="shows-more">${showAllShows ? "Show fewer" : `Show all ${allShows.length} shows`}</button>` : "";
     const chart = `
       <section class="panel">
         <div class="month-head"><h2>Sales by show</h2>${shows.length ? `<button class="linkbtn" data-go="events">All events</button>` : ""}</div>
@@ -1804,7 +1809,7 @@ import {
             <span class="nm"><span class="title">${esc(ev.name)}</span><span class="sub">${esc(evDates(ev))} · ${t.units} sold</span></span>
             <span class="amt num">${fmtShort(t.revenue)}</span>
             <span class="track"><span class="fill" style="width:${max ? Math.max(2, (t.revenue / max) * 100).toFixed(1) : 0}%"></span></span>
-          </button>`).join("")}</div>`
+          </button>`).join("")}</div>${moreBtn}`
           : `<div class="empty">Each show's total will show here once you record sales at it.</div>`}
       </section>`;
 
@@ -3512,6 +3517,11 @@ import {
     if (t.closest("[data-act='clear-examples']")) return clearExamples();
     if (t.closest("[data-act='csv']")) return downloadCSV();
     if (t.closest("[data-act='import']")) return importSheet();
+    if (t.closest("[data-act='shows-more']")) {
+      const was = showAllShows; showAllShows = !showAllShows; render();
+      if (was) { const h = document.querySelector("[data-act='shows-more']"); if (h) h.scrollIntoView({ block: "nearest" }); }
+      return;
+    }
     if (t.closest("[data-act='filter-event-pick']")) return pickEvent(state.filterEvent, (id) => { state.filterEvent = id; render(); window.scrollTo(0, 0); });
     if (t.closest("[data-act='filter-product-pick']")) {
       const products = state.products.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
