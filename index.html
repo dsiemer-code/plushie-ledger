@@ -1431,6 +1431,7 @@ import {
   const evEnd = (ev) => (ev.end && ev.end >= ev.start ? ev.end : ev.start);
   const evStatus = (ev, today = todayStr()) => (ev.start > today ? "upcoming" : evEnd(ev) < today ? "past" : "now");
   // Day arithmetic on "YYYY-MM-DD" strings
+  const dayNum = (dateStr) => { const [y, m, d] = dateStr.split("-").map(Number); return Math.round(Date.UTC(y, m - 1, d) / 864e5); };
   function addDays(dateStr, n) { const [y, m, d] = dateStr.split("-").map(Number); const t = new Date(y, m - 1, d + n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; }
   // A sale belongs to a show if it's dated during it, give or take a few days (sales typed in the next day)
   const nearEvent = (ev, date) => date >= addDays(ev.start, -3) && date <= addDays(evEnd(ev), 3);
@@ -2623,12 +2624,17 @@ import {
         if (!groups.length) { strayBox.innerHTML = ""; return; }
         const n = groups.reduce((a, [, l]) => a + l.length, 0), y = cur.start.slice(0, 4), ny = yearIn(cur.name);
         strayBox.innerHTML = `<div class="imp-box warn"><b>${n} sale${n === 1 ? " here isn't" : "s here aren't"} from this show's dates (${esc(evDates(cur))}).</b>
-          They may be from another year's show with the same name.
+          The show's dates may have been changed, or they're from another year's show with the same name.
           ${ny && ny !== y ? `<div style="margin-top:6px">This show is dated ${y} but its name says ${ny}. You can fix the name below.</div>` : ""}
           ${groups.map(([d, l]) => {
-            const fix = y + d.slice(4), fixOk = d.slice(0, 4) !== y && fix >= cur.start && fix <= evEnd(cur);
+            // Same day in the show's year if that's during the show (a year typo), otherwise the nearest show day
+            const sameDay = y + d.slice(4), yearTypo = d.slice(0, 4) !== y && sameDay >= cur.start && sameDay <= evEnd(cur);
+            const fix = yearTypo ? sameDay : d < cur.start ? cur.start : evEnd(cur);
+            const close = Math.abs(dayNum(d) - dayNum(fix)) <= 60, fixFirst = yearTypo || close;
+            const fixBtn = `<button type="button" class="btn ${fixFirst ? "" : "ghost "}small" data-stray-fix="${fix}">Change to ${esc(dayLabel(fix))}, ${fix.slice(0, 4)}</button>`;
+            const moveBtn = `<button type="button" class="btn ${fixFirst ? "ghost " : ""}small" data-stray-move>Move to their own show</button>`;
             return `<div class="stray-row" data-date="${d}"><div class="num">${l.length} sale${l.length === 1 ? "" : "s"} dated <b>${esc(dayLabel(d))}, ${d.slice(0, 4)}</b> · ${fmt(l.reduce((a, x) => a + (x.total || 0), 0))}</div>
-              <div class="stray-acts">${fixOk ? `<button type="button" class="btn small" data-stray-fix="${fix}">Change to ${esc(dayLabel(fix))}, ${y}</button>` : ""}<button type="button" class="btn ${fixOk ? "ghost " : ""}small" data-stray-move>Move to their own show</button></div></div>`;
+              <div class="stray-acts">${fixFirst ? fixBtn + moveBtn : moveBtn + fixBtn}</div></div>`;
           }).join("")}</div>`;
       };
       drawStray();
@@ -2678,7 +2684,23 @@ import {
         if (photoIds.length) data.photoIds = photoIds;
         const gone = (Array.isArray(ev.photoIds) ? ev.photoIds : []).filter((id) => !photoIds.includes(id));
         if (ev.example) data.example = true;
-        if (await api.saveEvent(ev.id || uid(), data)) { gone.forEach(dropPhoto); closeSheet(); toast(isNew ? "Event added" : "Saved", "ok"); }
+        // New dates: the show's sales move with it (same number of days in, kept inside the new dates).
+        // Sales that already fit the new dates, or never fit the old ones, are left alone.
+        const shifts = [];
+        if (!isNew && ev.start && (start !== ev.start || end !== evEnd(ev))) {
+          const delta = dayNum(start) - dayNum(ev.start), moved = { ...ev, start, end };
+          for (const x of state.sales) {
+            if (x.eventId !== ev.id || !x.date || nearEvent(moved, x.date) || !nearEvent(ev, x.date)) continue;
+            let to = addDays(x.date, delta);
+            if (to < start) to = start; else if (to > end) to = end;
+            if (to !== x.date) shifts.push([x.id, { date: to }]);
+          }
+        }
+        if (await api.saveEvent(ev.id || uid(), data)) {
+          gone.forEach(dropPhoto); closeSheet();
+          const ok = shifts.length ? await api.fixSales(shifts) : true;
+          toast(isNew ? "Event added" : shifts.length ? (ok ? `Saved · ${shifts.length} sale${shifts.length === 1 ? "" : "s"} moved to the new date${start === end ? "" : "s"}` : "Saved, but the sales' dates didn't change. Open the show to fix them.") : "Saved", ok ? "ok" : "warn");
+        }
       });
       if (!isNew) armDelete($("#e-del"), "Delete", async () => {
         if (await api.deleteEvent(ev.id)) { (Array.isArray(ev.photoIds) ? ev.photoIds : []).forEach(dropPhoto); closeSheet(); toast("Event deleted. Its sales stay in your history.", "ok"); }
