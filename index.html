@@ -66,7 +66,7 @@ header {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
   background: var(--surface); border-bottom: 2px dashed var(--line);
 }
-.wrap { max-width: 980px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1600px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 14px 10px; }
 h1 { font-family: var(--font-display); font-weight: 600; font-size: 1.45rem; margin: 0; letter-spacing: .01em; display: flex; align-items: center; gap: 8px; }
 h1 svg { flex: none; }
@@ -462,6 +462,13 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 
 .monthgroup h4 { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; padding-block: 4px 6px; }
 .monthgroup + .monthgroup { margin-top: 14px; }
+/* Big screens: use the width. Sales in each month sit in two columns, the year panels side by side */
+.ov-pair { display: grid; gap: 16px; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 1200px) {
+  .ov-pair { grid-template-columns: 1fr 1fr; }
+  .monthgroup .rows { grid-template-columns: 1fr 1fr; column-gap: 32px; }
+  .monthgroup .rows > .row:nth-child(2) { border-top: 0; }
+}
 .salerow { cursor: pointer; }
 .salerow:hover .title { color: var(--accent); }
 
@@ -1842,7 +1849,7 @@ import {
             <div class="pc-acts">${iss.none ? "" : `<button class="linkbtn" data-price-ok="${esc(id)}">It's right</button>`}<button class="btn small" data-edit="${esc(id)}">${iss.none ? "Add price" : "Fix"}</button></div>
           </div>`; }).join("")}</div>
       </section>` : "";
-    return priceHTML + nowPanels + nextHTML + stats + yearsHTML + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+    return priceHTML + nowPanels + nextHTML + (yearsHTML ? `<div class="ov-pair">${stats}${yearsHTML}</div>` : stats) + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
   // One row per sale; a sale with several plushies lists them together
