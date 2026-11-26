@@ -463,9 +463,9 @@ label.f { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; color: v
 .monthgroup h4 { margin: 0; display: flex; justify-content: space-between; gap: 8px; font-size: .95rem; padding-block: 4px 6px; }
 .monthgroup + .monthgroup { margin-top: 14px; }
 /* Big screens: use the width. Sales in each month sit in two columns, the year panels side by side */
-.ov-pair { display: grid; gap: 16px; grid-template-columns: 1fr; align-items: start; }
+.ov-cols { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; align-items: start; }
+.ov-col { display: grid; gap: 16px; min-width: 0; }
 @media (min-width: 1200px) {
-  .ov-pair { grid-template-columns: 1fr 1fr; }
   .monthgroup .rows { grid-template-columns: 1fr 1fr; column-gap: 32px; }
   .monthgroup .rows > .row:nth-child(2) { border-top: 0; }
 }
@@ -1689,6 +1689,8 @@ import {
   const hasExamples = () => state.products.some((p) => p.example) || state.sales.some((s) => s.example) || state.events.some((x) => x.example);
 
   // ---------- Render ----------
+  const WIDE = matchMedia("(min-width: 1200px)");
+  WIDE.addEventListener("change", () => { if (state.tab === "overview") render(); });
   function render() {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
     const v = document.getElementById("view");
@@ -1849,7 +1851,9 @@ import {
             <div class="pc-acts">${iss.none ? "" : `<button class="linkbtn" data-price-ok="${esc(id)}">It's right</button>`}<button class="btn small" data-edit="${esc(id)}">${iss.none ? "Add price" : "Fix"}</button></div>
           </div>`; }).join("")}</div>
       </section>` : "";
-    return priceHTML + nowPanels + nextHTML + (yearsHTML ? `<div class="ov-pair">${stats}${yearsHTML}</div>` : stats) + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
+    // Big screens: two columns that each stack their own panels, so a tall panel never leaves a gap beside a short one
+    if (WIDE.matches) return priceHTML + `<div class="ov-cols"><div class="ov-col">${nowPanels}${nextHTML}${stats}${chart}${recentHTML}</div><div class="ov-col">${yearsHTML}${best}${lowHTML}</div></div>`;
+    return priceHTML + nowPanels + nextHTML + stats + yearsHTML + `<div class="grid-2">${chart}${recentHTML}</div><div class="grid-2">${best}${lowHTML}</div>`;
   }
 
   // One row per sale; a sale with several plushies lists them together
